@@ -16,7 +16,9 @@ class RecoverableError extends Data.TaggedError("RecoverableError")<{
 }> {}
 class GoAwayError extends Data.TaggedError("GoAwayError")<{}> {}
 class RedirectingError extends Data.TaggedError("RedirectingError")<{ readonly to: string }> {}
-class UnhandledError extends Data.TaggedError("UnhandledError")<{}> {}
+
+/** A declared domain error with no registered handler — falls through to the 500 default. */
+class UnhandledDomainError extends Data.TaggedError("UnhandledDomainError")<{}> {}
 
 /** A domain error that handles itself via `HttpServerRespondable` — no handler needed. */
 class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
@@ -25,7 +27,16 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   }
 }
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory({
+type DomainErrors =
+  | FormError
+  | BadInputError
+  | RecoverableError
+  | GoAwayError
+  | RedirectingError
+  | NotAuthorizedError
+  | UnhandledDomainError;
+
+const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
     // throw → error boundary, via a raw `Response`
     BadInputError: (error: BadInputError) =>
@@ -192,10 +203,10 @@ describe("makeLoader — registered handlers", () => {
 });
 
 describe("makeLoader — unhandled & respondable errors", () => {
-  it("rejects an unregistered, non-respondable error as a 500", async () => {
+  it("falls through to a 500 for a declared domain error with no handler", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
-        yield* new UnhandledError();
+        yield* new UnhandledDomainError();
         return true;
       }),
     );
@@ -207,7 +218,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
   });
 
   it("auto-renders an unregistered error that implements HttpServerRespondable", async () => {
-    const ownFactory = makeLoaderOrActionFactory({ errorHandlers: {} });
+    const ownFactory = makeLoaderOrActionFactory()({ errorHandlers: {} });
     const loader = ownFactory.makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         yield* new NotAuthorizedError();

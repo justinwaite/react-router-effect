@@ -26,7 +26,8 @@ import { renderRoute } from "./app/render-route.tsx";
 
 class FormError extends Data.TaggedError("FormError")<{ readonly reply: string }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ readonly message: string }> {}
-class UnhandledError extends Data.TaggedError("UnhandledError")<{}> {}
+/** A declared domain error with no handler — falls through to the 500 default. */
+class UnhandledDomainError extends Data.TaggedError("UnhandledDomainError")<{}> {}
 
 /** Self-rendering domain error — handled via `HttpServerRespondable`, no handler. */
 class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
@@ -35,7 +36,9 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   }
 }
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory({
+type DomainErrors = FormError | BadInputError | UnhandledDomainError;
+
+const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
     // recover → returns to the component
     FormError: (error: FormError) => Respond.early({ reply: error.reply }),
@@ -162,10 +165,10 @@ describe("makeLoader — through a real router", () => {
       .toHaveTextContent('{"error":"Not authorized"}');
   });
 
-  it("falls through to a 500 for an unhandled, non-respondable error", async () => {
+  it("falls through to a 500 for a declared domain error with no handler", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
-        yield* new UnhandledError();
+        yield* new UnhandledDomainError();
         return { unreached: true };
       }),
     );
