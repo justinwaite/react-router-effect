@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Keep the SHA-pinned GitHub Actions current (Dependabot bumps the comment
+  # and the pinned commit together, so pinning never goes stale).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # npm dependencies. Grouped to reduce PR noise; majors stay separate so
+  # breaking bumps get individual review.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      dev-minor-patch:
+        dependency-type: development
+        update-types: [minor, patch]

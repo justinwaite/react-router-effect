@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only needs to read the repo.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Installs the vp CLI + the project's Node/package manager, and caches
+      # the dependency store. Replaces setup-node + pnpm setup + manual cache.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@2dec1e33f4ab2c6d5bce1b0c4607961bb1a3f7a1 # v1.12.0
+        with:
+          node-version-file: .node-version
+          cache: true
+          run-install: false # we install explicitly with --frozen-lockfile below
+
+      - name: Install dependencies
+        # --frozen-lockfile fails the build if pnpm-lock.yaml is out of date,
+        # so a tampered or drifted lockfile can never be silently installed.
+        run: vp install --frozen-lockfile
+
+      # Cache the Playwright browser binaries used by the Vitest browser tests.
+      # Keyed on the lockfile so it busts when the playwright version changes.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Download Chromium only on a cache miss; always install the system
+      # libraries it needs (those live outside the cached directory).
+      - name: Install Playwright Chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            vp exec playwright install-deps chromium
+          else
+            vp exec playwright install --with-deps chromium
+          fi
+
+      - name: Format, lint & type check
+        run: vp check
+
+      - name: Test
+        run: vp test run
+
+      - name: Build (pack)
+        run: vp pack

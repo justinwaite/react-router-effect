@@ -1,8 +1,59 @@
+import react from "@vitejs/plugin-react";
+import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
+  },
+  test: {
+    projects: [
+      {
+        // Fast Node tests for the library's runtime behavior, plus the
+        // `*.test-d.ts` return-type assertions run through `tsc --noEmit`.
+        test: {
+          name: "unit",
+          include: ["test/**/*.test.ts"],
+          environment: "node",
+          typecheck: {
+            enabled: true,
+            include: ["test/**/*.test-d.ts"],
+            // A dedicated tsconfig that excludes the browser `*.spec.tsx` files,
+            // whose browser-only imports the standalone `tsc` program can't resolve.
+            tsconfig: "./tsconfig.typecheck.json",
+          },
+        },
+      },
+      {
+        // Real-browser integration tests: a `makeLoader`/`makeAction` driven
+        // through a real React Router runtime (`createRoutesStub`) so the
+        // recover/throw/redirect/500 flow runs end-to-end in Chromium.
+        plugins: [react()],
+        // Pre-bundle these up front so Vitest doesn't discover them mid-run and
+        // force a reload (which logs a flakiness warning and re-runs tests).
+        optimizeDeps: {
+          include: [
+            "react",
+            "react-dom",
+            "react-dom/client",
+            "react/jsx-dev-runtime",
+            "react-router",
+            "effect",
+            "effect/unstable/http",
+          ],
+        },
+        test: {
+          name: "browser",
+          include: ["test/**/*.spec.tsx"],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
+    ],
   },
   pack: {
     dts: {

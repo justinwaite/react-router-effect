@@ -1,19 +1,30 @@
 {
+  "$schema": "https://schemastore.org/package.json",
   "name": "react-router-effect",
-  "version": "0.0.0",
-  "description": "A starter for creating a TypeScript package.",
-  "homepage": "https://github.com/author/library#readme",
+  "version": "0.1.0",
+  "description": "Wrap React Router loaders/actions with Effect, with typed recover/throw/redirect error handling.",
+  "keywords": [
+    "action",
+    "effect",
+    "error-handling",
+    "loader",
+    "react-router",
+    "typescript"
+  ],
+  "homepage": "https://github.com/justinwaite/react-router-effect#readme",
   "bugs": {
-    "url": "https://github.com/author/library/issues"
+    "url": "https://github.com/justinwaite/react-router-effect/issues"
   },
   "license": "MIT",
-  "author": "Author Name <author.name@mail.com>",
+  "author": "Justin Waite <justindwaite@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/author/library.git"
+    "url": "git+https://github.com/justinwaite/react-router-effect.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "!src/**/*.test.ts"
   ],
   "type": "module",
   "exports": {
@@ -27,16 +38,39 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:unit": "vp test run --project unit",
+    "test:browser": "vp test run --project browser",
+    "test:browser:install": "vp exec playwright install chromium",
     "check": "vp check",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:release": "vp run build && changeset publish",
     "prepublishOnly": "vp run build",
     "prepare": "vp config"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^25.6.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "bumpp": "^11.1.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/browser": "4.1.9",
+    "@vitest/browser-playwright": "4.1.9",
+    "effect": "4.0.0-beta.88",
+    "playwright": "1.60.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router": "^7.16.0",
     "typescript": "^6.0.3",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
+    "vitest-browser-react": "^2.2.0"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.0-beta.88",
+    "react-router": "^7.16.0"
   },
   "devEngines": {
     "packageManager": {

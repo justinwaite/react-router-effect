@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Don't cancel an in-flight publish; let releases finish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default to no permissions; the job opts into exactly what it needs.
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the version-bump commit and git tags
+      pull-requests: write # open/update the "Version Packages" PR
+      id-token: write # OIDC: token-free npm auth (Trusted Publishing) + provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # changesets needs full history to build changelogs
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@2dec1e33f4ab2c6d5bce1b0c4607961bb1a3f7a1 # v1.12.0
+        with:
+          node-version-file: .node-version
+          cache: true
+          run-install: false
+          registry-url: https://registry.npmjs.org # registry config for publish (OIDC, no token)
+
+      - name: Install dependencies
+        run: vp install --frozen-lockfile
+
+      - name: Create release PR or publish
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: vp run changeset:version
+          publish: vp run changeset:release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No npm token: auth is via OIDC Trusted Publishing (configured on the
+          # npm package settings for this repo + workflow). Provenance is
+          # attached automatically under trusted publishing.
