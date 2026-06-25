@@ -1,4 +1,4 @@
-import { Effect, type ManagedRuntime } from "effect";
+import { type Context, Effect, type ManagedRuntime } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
 import {
   data,
@@ -6,6 +6,7 @@ import {
   type ActionFunctionArgs,
   type UNSAFE_DataWithResponseInit as DataWithResponseInit,
   type LoaderFunctionArgs,
+  type RouterContext,
 } from "react-router";
 
 import {
@@ -128,6 +129,39 @@ const processRouteError = (
 };
 
 // ---------------------------------------------------------------------------
+// Per-request context.
+// ---------------------------------------------------------------------------
+
+/**
+ * A React Router context key holding a per-request effect `Context.Context`. Set
+ * it in middleware and pass it to the factory's `requestContext` — the runner
+ * reads it on every request and provides its services to the loader/action.
+ *
+ * It's just a `RouterContext`; create one with React Router's `createContext`:
+ *
+ * ```ts
+ * import { createContext } from "react-router";
+ * import { Context } from "effect";
+ * import type { RequestContextKey } from "react-router-effect";
+ *
+ * class RequestContext extends Context.Service<RequestContext, {
+ *   readonly userId: string;
+ * }>()("app/RequestContext") {}
+ *
+ * export const requestContext: RequestContextKey<RequestContext> = createContext();
+ *
+ * // middleware:
+ * export const middleware: Route.MiddlewareFunction[] = [
+ *   ({ context, request }, next) => {
+ *     context.set(requestContext, Context.make(RequestContext, { userId: readUser(request) }));
+ *     return next();
+ *   },
+ * ];
+ * ```
+ */
+export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqServices>>;
+
+// ---------------------------------------------------------------------------
 // Factory.
 // ---------------------------------------------------------------------------
 
@@ -183,7 +217,7 @@ const processRouteError = (
  * ```
  */
 export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() {
-  return function defineErrorHandlers<const Handlers = {}, RServices = never>(
+  return function defineErrorHandlers<const Handlers = {}, RServices = never, ReqServices = never>(
     config: {
       /**
        * An optional handler per declared domain error. Omit entirely to register
@@ -198,6 +232,14 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
        * omitted, `RServices` is `never` and effects must require nothing.
        */
       runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
+      /**
+       * A React Router context key (see {@link createRequestContext}) holding a
+       * per-request effect `Context.Context`. Middleware sets it for each request;
+       * the runner reads `args.context.get(requestContext)` and provides those
+       * services to the effect. Loader/action effects may then require
+       * `ReqServices` (inferred from here) in addition to the runtime's services.
+       */
+      requestContext?: RequestContextKey<ReqServices>;
     },
     // Validation: a handler for a non-domain error, or one that doesn't return a
     // route error / failing `Effect`, makes this rest parameter required and forces
@@ -209,6 +251,7 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
         ]
   ) {
     const runtime = config.runtime;
+    const requestContextKey = config.requestContext;
 
     // Uniform call signature for dispatch (the per-tag handler types are narrower).
     // Defaults to an empty map when `errorHandlers` is omitted.
@@ -221,9 +264,11 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
       typeof e === "object" && e !== null && "_tag" in e && (e as Tagged)._tag in userHandlers;
 
     function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E>(
-      // The effect may require `RServices` — the services the configured `runtime`
-      // provides (or `never` when no runtime is configured, requiring nothing).
-      fn: (args: Args) => Effect.Effect<A, E, RServices>,
+      // The effect may require `RServices` (provided by the configured `runtime`)
+      // and `ReqServices` (provided per-request from `requestContext`). Both are
+      // `never` when their source isn't configured, so the effect must require
+      // nothing extra.
+      fn: (args: Args) => Effect.Effect<A, E, RServices | ReqServices>,
       // If the effect can still fail with something the library won't handle — a
       // service-specific error that isn't a declared domain error, a library route
       // error, or respondable — this rest parameter becomes required and the call
@@ -269,11 +314,20 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
             },
           ),
         );
+        // Provide the per-request context (set by middleware) so `ReqServices` are
+        // satisfied, leaving only the runtime's `RServices` in the requirements.
+        // The cast is sound: `provideContext` removes `ReqServices`, and when no
+        // `requestContext` is configured `ReqServices` is `never` (nothing removed).
+        const provided = (
+          requestContextKey
+            ? Effect.provideContext(program, args.context.get(requestContextKey))
+            : program
+        ) as Effect.Effect<unknown, FailureResponse, RServices>;
         // Run against the configured runtime so its services satisfy the effect's
         // `R`; with no runtime, the effect requires nothing and runs standalone.
         const result = runtime
-          ? runtime.runPromise(program)
-          : Effect.runPromise(program as Effect.Effect<unknown, FailureResponse>);
+          ? runtime.runPromise(provided)
+          : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>);
         return result as Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>>;
       };
     }

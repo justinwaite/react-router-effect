@@ -177,12 +177,64 @@ makeLoaderOrActionFactory()({ runtime });
 makeLoaderOrActionFactory()({});
 ```
 
+### Per-request services from middleware
+
+The runtime provides app-wide services. For **request-scoped** services — the current user, a
+request id, a per-request transaction — use [middleware](https://reactrouter.com/how-to/middleware).
+Middleware sets a fresh effect `Context` on a React Router context key each request; the factory's
+`requestContext` reads it and provides those services to the loader/action:
+
+```ts
+// app/request-context.server.ts
+import { Context } from "effect";
+import { createContext } from "react-router";
+import type { RequestContextKey } from "react-router-effect";
+
+class RequestContext extends Context.Service<
+  RequestContext,
+  {
+    readonly userId: string;
+  }
+>()("app/RequestContext") {}
+
+// `requestContext` is a plain React Router context key — `createContext` is RR's own.
+export const requestContext: RequestContextKey<RequestContext> = createContext();
+
+// app/routes/profile.ts — middleware sets a fresh value per request:
+export const middleware: Route.MiddlewareFunction[] = [
+  ({ context, request }, next) => {
+    context.set(requestContext, Context.make(RequestContext, { userId: readUser(request) }));
+    return next();
+  },
+];
+
+// app/route.server.ts — wire the same key into the factory:
+export const { makeLoader } = makeLoaderOrActionFactory<DomainErrors>()({
+  runtime: appRuntime,
+  requestContext,
+});
+
+// the loader requires RequestContext directly — no provide, fresh each request:
+export const loader = makeLoader(() =>
+  Effect.gen(function* () {
+    const { userId } = yield* RequestContext;
+    return { userId };
+  }),
+);
+```
+
+Effects may now require both the runtime's services and the request context's; requiring anything
+else is a compile error. `RequestContextKey<ReqServices>` is a type alias for
+`RouterContext<Context.Context<ReqServices>>` — sugar for annotating the key, nothing more.
+
 ## API
 
-- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers?, runtime? })`** →
-  `{ makeLoader, makeAction }` (both are the same wrapper). Both config fields are optional. A
-  non-domain error left in a loader/action's error channel — or a required service the `runtime`
-  doesn't provide — is a compile error.
+- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers?, runtime?, requestContext? })`** →
+  `{ makeLoader, makeAction }` (both are the same wrapper). All config fields are optional. A
+  non-domain error left in a loader/action's error channel — or a required service that neither the
+  `runtime` nor the `requestContext` provides — is a compile error.
+- **`RequestContextKey<ReqServices>`** — type of the React Router context key for a per-request
+  effect context (`RouterContext<Context.Context<ReqServices>>`).
 - **`Respond`** — `early` (recover), `throw`, `redirect`.
 - **`ReturnableDataError`**, **`ThrowableDataError`**, **`ThrowableRedirectError`** — the library
   route errors, and **`isRouteError`** to narrow them.
