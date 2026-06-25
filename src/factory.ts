@@ -239,7 +239,6 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
     }
 
     return {
-      makeLoaderOrAction,
       makeLoader: makeLoaderOrAction,
       makeAction: makeLoaderOrAction,
     };
