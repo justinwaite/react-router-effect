@@ -140,11 +140,49 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
 
 A registered handler, if present, still takes precedence over the error's own response.
 
+### Providing services with a runtime
+
+Pass a `runtime` (an effect [`ManagedRuntime`](https://effect.website)) and your loaders/actions
+may require its services directly — no per-call `Effect.provide`. The runtime is built once and
+reused for every request:
+
+```ts
+// app/runtime.server.ts
+import { ManagedRuntime } from "effect";
+export const appRuntime = ManagedRuntime.make(AppLayer); // provides Database, MyService, ...
+
+// app/route.server.ts
+export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
+  runtime: appRuntime,
+  errorHandlers: { ... },
+});
+
+// app/routes/profile.ts — `MyService` is satisfied by the runtime, not provided here:
+const loader = makeLoader((args: Route.LoaderArgs) =>
+  Effect.gen(function* () {
+    const svc = yield* MyService;
+    return { profile: yield* svc.load(args.params.id) };
+  }),
+);
+```
+
+The runtime's services become the effect's allowed requirement channel: requiring a service the
+runtime provides type-checks, while requiring one it _doesn't_ is a compile error. With no
+`runtime`, effects must require nothing.
+
+`errorHandlers` is optional too — configure a factory with just a runtime, or with nothing:
+
+```ts
+makeLoaderOrActionFactory()({ runtime });
+makeLoaderOrActionFactory()({});
+```
+
 ## API
 
-- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers })`** → `{ makeLoader, makeAction }`
-  (both are the same wrapper). A non-domain error left in a loader/action's error channel is a
-  compile error.
+- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers?, runtime? })`** →
+  `{ makeLoader, makeAction }` (both are the same wrapper). Both config fields are optional. A
+  non-domain error left in a loader/action's error channel — or a required service the `runtime`
+  doesn't provide — is a compile error.
 - **`Respond`** — `early` (recover), `throw`, `redirect`.
 - **`ReturnableDataError`**, **`ThrowableDataError`**, **`ThrowableRedirectError`** — the library
   route errors, and **`isRouteError`** to narrow them.
