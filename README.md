@@ -39,18 +39,23 @@ A loader/action effect can short-circuit in three ways, via the `Respond` helper
 | `Respond.throw(value, init?)`  | **throw**   | rejects with `data(value, init)` → error boundary   |
 | `Respond.redirect(url, init?)` | **throw**   | rejects with a redirect `Response`                  |
 
-Your own **domain errors** are mapped to one of those outcomes by handlers you register with
-the factory. A handler _remaps_ an error by returning either:
+You declare your app's **domain errors** as a type argument to the factory, and may register a
+handler per domain error. A handler _remaps_ an error by returning either:
 
 - a library route error — `Respond.early(...)` / `Respond.throw(...)` / `Respond.redirect(...)`; or
 - an `Effect` — `Effect.succeed(value)` to **recover** with `value`, or `Effect.fail(response)`
   to **throw** a `Response` / `DataWithResponseInit`.
 
-Handling is **optional**:
+A **declared domain error** may be left unhandled:
 
-- An **unregistered** error that implements [`HttpServerRespondable`](https://effect.website)
-  is rendered automatically from its own response.
-- Any other unregistered error falls through to a **500**.
+- if it implements [`HttpServerRespondable`](https://effect.website) it's rendered automatically
+  from its own response;
+- otherwise it falls through to a **500**.
+
+**Any other error** a route consumes — a service-specific error that isn't a declared domain
+error — **must be handled** in the loader/action (caught or mapped), or `makeLoader`/`makeAction`
+fails to type-check. This gives app-wide defaults for declared errors while enforcing explicit
+handling of feature/service-specific ones.
 
 ## Usage
 
@@ -63,8 +68,14 @@ import { makeLoaderOrActionFactory, Respond as baseRespond } from "react-router-
 
 class FormError extends Data.TaggedError("FormError")<{ reply: SubmissionResponse }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ message: string }> {}
+class DbError extends Data.TaggedError("DbError")<{ query: string }> {}
 
-export const { makeLoader, makeAction } = makeLoaderOrActionFactory({
+// Declare every error your app handles app-wide. `DbError` has no handler below,
+// so it falls through to the 500 default.
+type DomainErrors = FormError | BadInputError | DbError;
+
+// Curried: pin the domain errors, then the handler types are inferred.
+export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
     // recover: short-circuit and hand the reply to the component
     FormError: (error: FormError) => baseRespond.early({ reply: error.reply }),
@@ -81,8 +92,8 @@ export const Respond = {
 };
 ```
 
-> **Annotate each handler's parameter.** The registered error set and the precise recover
-> types are derived from the handler map's parameter and return types.
+> **Annotate each handler's parameter.** Handlers must be keyed by a declared domain error, and
+> the precise recover types are derived from the handler map's parameter and return types.
 
 ### 2. Write loaders/actions as effects
 
@@ -131,8 +142,9 @@ A registered handler, if present, still takes precedence over the error's own re
 
 ## API
 
-- **`makeLoaderOrActionFactory({ errorHandlers })`** → `{ makeLoader, makeAction, makeLoaderOrAction }`
-  (the three are the same wrapper under different names).
+- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers })`** → `{ makeLoader, makeAction }`
+  (both are the same wrapper). A non-domain error left in a loader/action's error channel is a
+  compile error.
 - **`Respond`** — `early` (recover), `throw`, `redirect`.
 - **`ReturnableDataError`**, **`ThrowableDataError`**, **`ThrowableRedirectError`** — the library
   route errors, and **`isRouteError`** to narrow them.
