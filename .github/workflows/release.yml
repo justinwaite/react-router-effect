@@ -21,10 +21,22 @@ jobs:
       pull-requests: write # open/update the "Version Packages" PR
       id-token: write # OIDC: token-free npm auth (Trusted Publishing) + provenance
     steps:
+      # Mint a short-lived token for the release GitHub App. Using an App token
+      # (instead of the default GITHUB_TOKEN) means the "Version Packages" PR and
+      # its commits trigger CI, and — paired with commitMode below — the version
+      # commit is attributed to the App.
+      - name: Generate release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0 # changesets needs full history to build changelogs
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@2dec1e33f4ab2c6d5bce1b0c4607961bb1a3f7a1 # v1.12.0
@@ -42,8 +54,13 @@ jobs:
         with:
           version: vp run changeset:version
           publish: vp run changeset:release
+          # Create the version commit and tags through the GitHub API so they're
+          # signed with GitHub's GPG key (verified). Required because the repo's
+          # ruleset enforces signed commits — a plain git push would be unsigned
+          # and the Version Packages PR couldn't be merged.
+          commitMode: github-api
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           # No npm token: auth is via OIDC Trusted Publishing (configured on the
           # npm package settings for this repo + workflow). Provenance is
           # attached automatically under trusted publishing.
