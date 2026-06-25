@@ -76,7 +76,7 @@
     "packageManager": {
       "name": "pnpm",
       "version": "11.9.0",
-      "onFail": "download"
+      "onFail": "warn"
     }
   }
 }
