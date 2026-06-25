@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, type ManagedRuntime } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
 import {
   data,
@@ -162,10 +162,43 @@ const processRouteError = (
  * to a 500. **Any other error** — a service-specific error the route consumes that
  * isn't a declared domain error — *must* be handled in the loader/action, or
  * `makeLoader`/`makeAction` fails to type-check.
+ *
+ * Pass a `runtime` (a `ManagedRuntime`, e.g. from `ManagedRuntime.make(AppLayer)`)
+ * to provide your app's services once. Loader/action effects may then require those
+ * services directly — no per-call `Effect.provide`:
+ *
+ * ```ts
+ * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
+ *   runtime: getAppRuntime(), // provides Database, MyService, ...
+ *   errorHandlers: { ... },
+ * });
+ *
+ * // `MyService` is satisfied by the runtime, not provided here:
+ * const loader = makeLoader((args: Route.LoaderArgs) =>
+ *   Effect.gen(function* () {
+ *     const svc = yield* MyService;
+ *     return { data: yield* svc.load(args) };
+ *   }),
+ * );
+ * ```
  */
 export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() {
-  return function defineErrorHandlers<const Handlers>(
-    config: { errorHandlers: Handlers },
+  return function defineErrorHandlers<const Handlers = {}, RServices = never>(
+    config: {
+      /**
+       * An optional handler per declared domain error. Omit entirely to register
+       * none (e.g. when relying on `HttpServerRespondable` / the 500 default, or
+       * when there are no domain errors at all).
+       */
+      errorHandlers?: Handlers;
+      /**
+       * The app runtime that provides services to loader/action effects. When
+       * set, effects may require its services (`RServices`, inferred from here)
+       * without providing layers, and runs go through `runtime.runPromise`. When
+       * omitted, `RServices` is `never` and effects must require nothing.
+       */
+      runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
+    },
     // Validation: a handler for a non-domain error, or one that doesn't return a
     // route error / failing `Effect`, makes this rest parameter required and forces
     // a compile error at the call.
@@ -175,20 +208,22 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
           eachHandlerMustBeForADeclaredDomainErrorAndReturnARouteErrorOrAnEffect: ValidHandlers<DomainError>,
         ]
   ) {
-    const isUserError = (e: unknown): e is DomainError =>
-      typeof e === "object" &&
-      e !== null &&
-      "_tag" in e &&
-      (e as Tagged)._tag in (config.errorHandlers as object);
+    const runtime = config.runtime;
 
     // Uniform call signature for dispatch (the per-tag handler types are narrower).
-    const userHandlers = config.errorHandlers as unknown as Record<
+    // Defaults to an empty map when `errorHandlers` is omitted.
+    const userHandlers = (config.errorHandlers ?? {}) as unknown as Record<
       string,
       ErrorHandler<DomainError>
     >;
 
+    const isUserError = (e: unknown): e is DomainError =>
+      typeof e === "object" && e !== null && "_tag" in e && (e as Tagged)._tag in userHandlers;
+
     function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E>(
-      fn: (args: Args) => Effect.Effect<A, E>,
+      // The effect may require `RServices` — the services the configured `runtime`
+      // provides (or `never` when no runtime is configured, requiring nothing).
+      fn: (args: Args) => Effect.Effect<A, E, RServices>,
       // If the effect can still fail with something the library won't handle — a
       // service-specific error that isn't a declared domain error, a library route
       // error, or respondable — this rest parameter becomes required and the call
@@ -202,40 +237,45 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
             >,
           ]
     ): (args: Args) => Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>> {
-      return (args: Args) =>
+      return (args: Args) => {
         // The internal channel is deliberately loose (`unknown` success); the outer
         // cast restores the precise resolved type (computed from `E` and the handler
         // map). Sound at runtime — the values produced are exactly those types.
-        Effect.runPromise(
-          fn(args).pipe(
-            // Catch the whole error channel and dispatch. The refinement is `e is E`
-            // (provably ⊆ E, and a *refinement* not a bare predicate — the predicate
-            // overload crashes tsc over a generic `E`). A declared domain error with
-            // no handler (and not respondable) falls through to the 500 default.
-            Effect.catchIf(
-              (_e): _e is E => true,
-              (e): Effect.Effect<unknown, FailureResponse> => {
-                // Registered domain error → remap. A library-error return is processed
-                // by the internal dispatch; an `Effect` return is used as-is.
-                if (isUserError(e)) {
-                  const out = userHandlers[e._tag](e);
-                  return isRouteError(out) ? processRouteError(out) : out;
-                }
-                // A library route error raised directly in the loader → recover/throw.
-                if (isRouteError(e)) return processRouteError(e);
-                // Respondable → render its own response and throw it.
-                if (HttpServerRespondable.isRespondable(e)) {
-                  return HttpServerRespondable.toResponse(e).pipe(
-                    Effect.flatMap((res) =>
-                      Effect.fail<FailureResponse>(HttpServerResponse.toWeb(res)),
-                    ),
-                  );
-                }
-                return internalServerError();
-              },
-            ),
+        const program = fn(args).pipe(
+          // Catch the whole error channel and dispatch. The refinement is `e is E`
+          // (provably ⊆ E, and a *refinement* not a bare predicate — the predicate
+          // overload crashes tsc over a generic `E`). A declared domain error with
+          // no handler (and not respondable) falls through to the 500 default.
+          Effect.catchIf(
+            (_e): _e is E => true,
+            (e): Effect.Effect<unknown, FailureResponse> => {
+              // Registered domain error → remap. A library-error return is processed
+              // by the internal dispatch; an `Effect` return is used as-is.
+              if (isUserError(e)) {
+                const out = userHandlers[e._tag](e);
+                return isRouteError(out) ? processRouteError(out) : out;
+              }
+              // A library route error raised directly in the loader → recover/throw.
+              if (isRouteError(e)) return processRouteError(e);
+              // Respondable → render its own response and throw it.
+              if (HttpServerRespondable.isRespondable(e)) {
+                return HttpServerRespondable.toResponse(e).pipe(
+                  Effect.flatMap((res) =>
+                    Effect.fail<FailureResponse>(HttpServerResponse.toWeb(res)),
+                  ),
+                );
+              }
+              return internalServerError();
+            },
           ),
-        ) as Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>>;
+        );
+        // Run against the configured runtime so its services satisfy the effect's
+        // `R`; with no runtime, the effect requires nothing and runs standalone.
+        const result = runtime
+          ? runtime.runPromise(program)
+          : Effect.runPromise(program as Effect.Effect<unknown, FailureResponse>);
+        return result as Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>>;
+      };
     }
 
     return {
