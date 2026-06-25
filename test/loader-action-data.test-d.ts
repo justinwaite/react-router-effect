@@ -39,7 +39,9 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   }
 }
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory({
+type DomainErrors = BadInputError | FormError | RecoverableError | GoAwayError;
+
+const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
     // throw → contributes nothing to the resolved data
     BadInputError: (error: BadInputError) =>
@@ -53,7 +55,7 @@ const { makeLoader, makeAction } = makeLoaderOrActionFactory({
   },
 });
 
-const empty = makeLoaderOrActionFactory({ errorHandlers: {} });
+const empty = makeLoaderOrActionFactory()({ errorHandlers: {} });
 
 // ---------------------------------------------------------------------------
 // loaderData = the effect's own success ∪ directly-recovered bodies ∪ the
