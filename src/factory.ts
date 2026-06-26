@@ -261,8 +261,9 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
       /**
        * App-specific `Respond` helpers — merged onto the base `Respond` that the
        * factory returns, so your app imports one `Respond`. Typically opinionated
-       * error constructors, e.g. `{ formError: (reply) => new FormError({ reply }) }`.
-       * The base helpers (`early` / `throw` / `redirect`) always win the merge.
+       * error constructors; annotate their parameters, e.g.
+       * `{ formError: (reply: string) => new FormError({ reply }) }`. The base
+       * helpers (`early` / `throw` / `redirect`) always win the merge.
        */
       respond?: ExtraRespond;
     },
