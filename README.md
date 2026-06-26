@@ -64,7 +64,7 @@ handling of feature/service-specific ones.
 ```ts
 // app/route.server.ts
 import { Data, Effect } from "effect";
-import { makeLoaderOrActionFactory, Respond as baseRespond } from "react-router-effect";
+import { makeLoaderOrActionFactory } from "react-router-effect";
 
 class FormError extends Data.TaggedError("FormError")<{ reply: SubmissionResponse }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ message: string }> {}
@@ -74,27 +74,31 @@ class DbError extends Data.TaggedError("DbError")<{ query: string }> {}
 // so it falls through to the 500 default.
 type DomainErrors = FormError | BadInputError | DbError;
 
-// Curried: pin the domain errors, then the handler types are inferred.
-export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
-  errorHandlers: {
-    // keys autocomplete to your domain-error tags; `error` is typed from its key.
-    // recover: short-circuit and hand the reply to the component
-    FormError: (error) => baseRespond.early({ reply: error.reply }),
-    // throw: send to the error boundary
-    BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
-  },
-});
-
-// Extend Respond with app-specific helpers if you like:
-export const Respond = {
-  ...baseRespond,
-  formError: (reply: SubmissionResponse) => new FormError({ reply }),
-};
+// Curried: pin the domain errors, then the handler types are inferred. The config
+// is a *builder* — it receives `Respond` (the library's `early`/`throw`/`redirect`)
+// so your handlers can recover/throw, and the factory hands back a single `Respond`
+// for your routes to import (no auto-import ambiguity with a library export).
+export const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+  (Respond) => ({
+    // App-specific helpers — merged onto the returned `Respond` (base helpers win):
+    respond: {
+      formError: (reply: SubmissionResponse) => new FormError({ reply }),
+    },
+    errorHandlers: {
+      // keys autocomplete to your domain-error tags; `error` is typed from its key.
+      // recover: short-circuit and hand the reply to the component
+      FormError: (error) => Respond.early({ reply: error.reply }),
+      // throw: send to the error boundary
+      BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
+    },
+  }),
+);
 ```
 
-> **No annotations needed.** Handler keys autocomplete to your declared domain-error tags, each
-> `error` parameter is typed from its key, and the precise recover types are derived from each
-> handler's return.
+> **One `Respond`, no annotations.** Your routes import the `Respond` returned here — there's
+> no library-level `Respond` to clash with it on auto-import. Handler keys autocomplete to your
+> declared domain-error tags, each `error` parameter is typed from its key, and the precise
+> recover types are derived from each handler's return.
 
 ### 2. Write loaders/actions as effects
 
@@ -153,10 +157,10 @@ import { ManagedRuntime } from "effect";
 export const appRuntime = ManagedRuntime.make(AppLayer); // provides Database, MyService, ...
 
 // app/route.server.ts
-export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
+export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
   runtime: appRuntime,
   errorHandlers: { ... },
-});
+}));
 
 // app/routes/profile.ts — `MyService` is satisfied by the runtime, not provided here:
 const loader = makeLoader((args: Route.LoaderArgs) =>
@@ -174,8 +178,8 @@ runtime provides type-checks, while requiring one it _doesn't_ is a compile erro
 `errorHandlers` is optional too — configure a factory with just a runtime, or with nothing:
 
 ```ts
-makeLoaderOrActionFactory()({ runtime });
-makeLoaderOrActionFactory()({});
+makeLoaderOrActionFactory()(() => ({ runtime }));
+makeLoaderOrActionFactory()(() => ({}));
 ```
 
 ### Per-request services from middleware
@@ -210,10 +214,10 @@ export const middleware: Route.MiddlewareFunction[] = [
 ];
 
 // app/route.server.ts — wire the same key into the factory:
-export const { makeLoader } = makeLoaderOrActionFactory<DomainErrors>()({
+export const { makeLoader } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
   runtime: appRuntime,
   requestContext,
-});
+}));
 
 // the loader requires RequestContext directly — no provide, fresh each request:
 export const loader = makeLoader(() =>
@@ -230,13 +234,16 @@ else is a compile error. `RequestContextKey<ReqServices>` is a type alias for
 
 ## API
 
-- **`makeLoaderOrActionFactory<DomainErrors>()({ errorHandlers?, runtime?, requestContext? })`** →
-  `{ makeLoader, makeAction }` (both are the same wrapper). All config fields are optional. A
-  non-domain error left in a loader/action's error channel — or a required service that neither the
-  `runtime` nor the `requestContext` provides — is a compile error.
+- **`makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond? }))`**
+  → `{ makeLoader, makeAction, Respond }` (the two makers are the same wrapper). The config is a
+  _builder_ that receives the base `Respond`; all its fields are optional. The returned `Respond` is
+  the base helpers merged with your `respond` extensions (base helpers win). A non-domain error left
+  in a loader/action's error channel — or a required service that neither the `runtime` nor the
+  `requestContext` provides — is a compile error.
 - **`RequestContextKey<ReqServices>`** — type of the React Router context key for a per-request
   effect context (`RouterContext<Context.Context<ReqServices>>`).
-- **`Respond`** — `early` (recover), `throw`, `redirect`.
+- **`Respond`** (returned from the factory) — `early` (recover), `throw`, `redirect`, plus any
+  `respond` helpers you add.
 - **`ReturnableDataError`**, **`ThrowableDataError`**, **`ThrowableRedirectError`** — the library
   route errors, and **`isRouteError`** to narrow them.
 - **`ErrorHandler<Err>`** — the handler signature type.

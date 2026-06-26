@@ -3,7 +3,7 @@ import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
 import type { LoaderFunctionArgs } from "react-router";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory, Respond } from "../src/index.ts";
+import { makeLoaderOrActionFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures.
@@ -36,23 +36,26 @@ type DomainErrors =
   | NotAuthorizedError
   | UnhandledDomainError;
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
-  errorHandlers: {
-    // throw → error boundary, via a raw `Response`
-    BadInputError: (error: BadInputError) =>
-      Effect.fail(new Response(error.message, { status: 400 })),
-    // recover → returnable library error
-    FormError: (error: FormError) => Respond.early({ reply: error.reply }),
-    // recover → Effect.succeed
-    RecoverableError: (error: RecoverableError) => Effect.succeed({ recovered: error.fallback }),
-    // throw → returnable library error
-    GoAwayError: (_error: GoAwayError) => Respond.throw({ message: "go away" }, 418),
-    // throw → redirect library error
-    RedirectingError: (error: RedirectingError) => Respond.redirect(error.to, 302),
-    // a registered handler still wins for a respondable error
-    NotAuthorizedError: (_error: NotAuthorizedError) => Respond.early({ handledExplicitly: true }),
-  },
-});
+const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+  (Respond) => ({
+    errorHandlers: {
+      // throw → error boundary, via a raw `Response`
+      BadInputError: (error: BadInputError) =>
+        Effect.fail(new Response(error.message, { status: 400 })),
+      // recover → returnable library error
+      FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+      // recover → Effect.succeed
+      RecoverableError: (error: RecoverableError) => Effect.succeed({ recovered: error.fallback }),
+      // throw → returnable library error
+      GoAwayError: (_error: GoAwayError) => Respond.throw({ message: "go away" }, 418),
+      // throw → redirect library error
+      RedirectingError: (error: RedirectingError) => Respond.redirect(error.to, 302),
+      // a registered handler still wins for a respondable error
+      NotAuthorizedError: (_error: NotAuthorizedError) =>
+        Respond.early({ handledExplicitly: true }),
+    },
+  }),
+);
 
 const args = {} as LoaderFunctionArgs;
 
@@ -218,7 +221,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
   });
 
   it("auto-renders an unregistered error that implements HttpServerRespondable", async () => {
-    const ownFactory = makeLoaderOrActionFactory()({ errorHandlers: {} });
+    const ownFactory = makeLoaderOrActionFactory()(() => ({ errorHandlers: {} }));
     const loader = ownFactory.makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         yield* new NotAuthorizedError();

@@ -17,7 +17,7 @@ import {
 import { page, userEvent } from "@vitest/browser/context";
 import { describe, expect, it } from "vitest";
 
-import { makeLoaderOrActionFactory, Respond } from "../src/index.ts";
+import { makeLoaderOrActionFactory } from "../src/index.ts";
 import { renderRoute } from "./app/render-route.tsx";
 
 // ---------------------------------------------------------------------------
@@ -38,15 +38,17 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
 
 type DomainErrors = FormError | BadInputError | UnhandledDomainError;
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
-  errorHandlers: {
-    // recover → returns to the component
-    FormError: (error: FormError) => Respond.early({ reply: error.reply }),
-    // throw → error boundary
-    BadInputError: (error: BadInputError) =>
-      Effect.fail(new Response(error.message, { status: 400 })),
-  },
-});
+const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+  (Respond) => ({
+    errorHandlers: {
+      // recover → returns to the component
+      FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+      // throw → error boundary
+      BadInputError: (error: BadInputError) =>
+        Effect.fail(new Response(error.message, { status: 400 })),
+    },
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Shared route building blocks.

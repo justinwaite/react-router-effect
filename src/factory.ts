@@ -11,10 +11,14 @@ import {
 
 import {
   isRouteError,
+  Respond as baseRespond,
   ReturnableDataError,
   ThrowableDataError,
   type AnyRouteError,
 } from "./errors.ts";
+
+/** The library's base `Respond` helpers (`early` / `throw` / `redirect`). */
+type BaseRespond = typeof baseRespond;
 
 // ---------------------------------------------------------------------------
 // Type-level plumbing.
@@ -173,14 +177,20 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * ```ts
  * type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
  *
- * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
- *   errorHandlers: {
- *     // `error` is typed as MyDomainError automatically. throw → error boundary
- *     MyDomainError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
- *     // DbError has no handler → falls through to the 500 default.
- *   },
- * });
+ * export const { makeLoader, makeAction, Respond } =
+ *   makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
+ *     errorHandlers: {
+ *       // `error` is typed as MyDomainError automatically. throw → error boundary
+ *       MyDomainError: (error) => Respond.throw({ message: error.message }, 400),
+ *       // DbError has no handler → falls through to the 500 default.
+ *     },
+ *   }));
  * ```
+ *
+ * The inner config is a **builder** — it receives the library's `Respond` helpers so
+ * your handlers can recover/throw with them, and returns the config. `Respond` is
+ * also returned from the factory (extended with any `respond` helpers you add), so
+ * your app imports a *single* `Respond` — no auto-import ambiguity with a library one.
  *
  * A handler *remaps* the error by returning either a library route error
  * (`Respond.early` to recover; `Respond.throw` / `Respond.redirect` to throw) or an
@@ -198,10 +208,10 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * services directly — no per-call `Effect.provide`:
  *
  * ```ts
- * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
+ * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
  *   runtime: getAppRuntime(), // provides Database, MyService, ...
  *   errorHandlers: { ... },
- * });
+ * }));
  *
  * // `MyService` is satisfied by the runtime, not provided here:
  * const loader = makeLoader((args: Route.LoaderArgs) =>
@@ -217,33 +227,52 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
     const Returns extends HandlerReturns<DomainError> = {},
     RServices = never,
     ReqServices = never,
-  >(config: {
+    const ExtraRespond extends Record<string, (...args: never[]) => unknown> = {},
+  >(
     /**
-     * An optional handler per declared domain error, keyed by its tag. The keys
-     * autocomplete to your domain-error tags and each handler's `error` parameter
-     * is typed automatically — no annotation needed. A handler *remaps* the error
-     * by returning a library route error (`Respond.early` / `throw` / `redirect`)
-     * or an `Effect` (`Effect.succeed`/`fail`). Omit entirely to register none.
+     * Builds the factory config. It receives the library's base `Respond` helpers
+     * (`early` / `throw` / `redirect`) so your `errorHandlers` can recover/throw
+     * with them, and returns the config object.
      */
-    errorHandlers?: ErrorHandlers<DomainError, Returns>;
-    /**
-     * The app runtime that provides services to loader/action effects. When
-     * set, effects may require its services (`RServices`, inferred from here)
-     * without providing layers, and runs go through `runtime.runPromise`. When
-     * omitted, `RServices` is `never` and effects must require nothing.
-     */
-    runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
-    /**
-     * A React Router context key (a {@link RequestContextKey}) holding a
-     * per-request effect `Context.Context`. Middleware sets it for each request;
-     * the runner reads `args.context.get(requestContext)` and provides those
-     * services to the effect. Loader/action effects may then require
-     * `ReqServices` (inferred from here) in addition to the runtime's services.
-     */
-    requestContext?: RequestContextKey<ReqServices>;
-  }) {
+    builder: (respond: BaseRespond) => {
+      /**
+       * An optional handler per declared domain error, keyed by its tag. The keys
+       * autocomplete to your domain-error tags and each handler's `error` parameter
+       * is typed automatically — no annotation needed. A handler *remaps* the error
+       * by returning a library route error (the builder's `Respond.early` / `throw`
+       * / `redirect`) or an `Effect` (`Effect.succeed`/`fail`). Omit to register none.
+       */
+      errorHandlers?: ErrorHandlers<DomainError, Returns>;
+      /**
+       * The app runtime that provides services to loader/action effects. When
+       * set, effects may require its services (`RServices`, inferred from here)
+       * without providing layers, and runs go through `runtime.runPromise`. When
+       * omitted, `RServices` is `never` and effects must require nothing.
+       */
+      runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
+      /**
+       * A React Router context key (a {@link RequestContextKey}) holding a
+       * per-request effect `Context.Context`. Middleware sets it for each request;
+       * the runner reads `args.context.get(requestContext)` and provides those
+       * services to the effect. Loader/action effects may then require
+       * `ReqServices` (inferred from here) in addition to the runtime's services.
+       */
+      requestContext?: RequestContextKey<ReqServices>;
+      /**
+       * App-specific `Respond` helpers — merged onto the base `Respond` that the
+       * factory returns, so your app imports one `Respond`. Typically opinionated
+       * error constructors, e.g. `{ formError: (reply) => new FormError({ reply }) }`.
+       * The base helpers (`early` / `throw` / `redirect`) always win the merge.
+       */
+      respond?: ExtraRespond;
+    },
+  ) {
+    const config = builder(baseRespond);
     const runtime = config.runtime;
     const requestContextKey = config.requestContext;
+    // The single `Respond` an app uses: base helpers plus any app-specific ones.
+    // Base wins the merge so core helpers can't be shadowed.
+    const Respond = { ...config.respond, ...baseRespond } as BaseRespond & ExtraRespond;
 
     // Uniform call signature for dispatch (the per-tag handler types are narrower).
     // Defaults to an empty map when `errorHandlers` is omitted.
@@ -327,6 +356,7 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
     return {
       makeLoader: makeLoaderOrAction,
       makeAction: makeLoaderOrAction,
+      Respond,
     };
   };
 }

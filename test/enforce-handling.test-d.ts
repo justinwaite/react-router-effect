@@ -3,7 +3,7 @@ import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
 import type { LoaderFunctionArgs } from "react-router";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory, Respond } from "../src/index.ts";
+import { makeLoaderOrActionFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // The factory's contract: app-wide *declared domain errors* may be left to the
@@ -28,13 +28,13 @@ type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
 /** A service-specific error a single route consumes — NOT a declared domain error. */
 class FooServiceError extends Data.TaggedError("FooServiceError")<{ readonly reason: number }> {}
 
-const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
+const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
   errorHandlers: {
     MyDomainError: (error: MyDomainError) =>
       Effect.fail(new Response(error.message, { status: 400 })),
     // DbError and NotAuthorizedError intentionally have no handler.
   },
-});
+}));
 
 describe("declared domain errors need no handling in the loader/action", () => {
   it("a registered domain error type-checks", () => {

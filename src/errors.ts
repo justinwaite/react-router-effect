@@ -29,15 +29,18 @@ export type AnyRouteError =
   | ThrowableRedirectError;
 
 /**
- * Standardized helpers for raising the library's route errors. Consumers extend it
- * by spreading into their own object — opinionated helpers (e.g. a form-library
- * `formError`) live in the consumer, not here:
+ * The library's base helpers for raising route errors (`early` / `throw` /
+ * `redirect`). This is internal: it isn't exported from the package. The factory
+ * hands it to your config builder and returns it (merged with any `respond`
+ * extensions) so your app imports a single `Respond`:
  *
  * ```ts
- * export const Respond = {
- *   ...baseRespond,
- *   formError: (reply) => baseRespond.early({ reply }, 400),
- * };
+ * export const { makeLoader, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+ *   (Respond) => ({
+ *     respond: { formError: (reply) => new FormError({ reply }) },
+ *     errorHandlers: { FormError: (e) => Respond.early({ reply: e.reply }) },
+ *   }),
+ * );
  * ```
  */
 export const Respond = {

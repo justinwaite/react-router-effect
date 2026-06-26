@@ -23,7 +23,7 @@ function argsForRequest(userId: string): LoaderFunctionArgs {
 }
 
 describe("request context (no runtime)", () => {
-  const { makeLoader, makeAction } = makeLoaderOrActionFactory()({ requestContext });
+  const { makeLoader, makeAction } = makeLoaderOrActionFactory()(() => ({ requestContext }));
 
   it("provides the per-request service to the effect", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
@@ -71,7 +71,7 @@ describe("runtime services + request context compose", () => {
   const runtime = ManagedRuntime.make(AppConfig.layer);
   afterAll(() => runtime.dispose());
 
-  const { makeLoader } = makeLoaderOrActionFactory()({ runtime, requestContext });
+  const { makeLoader } = makeLoaderOrActionFactory()(() => ({ runtime, requestContext }));
 
   it("an effect may require both an app service and a request service", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
