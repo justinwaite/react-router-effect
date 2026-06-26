@@ -53,22 +53,43 @@ type DirectRecover<E> = [ReturnableBodyOf<E>] extends [never]
   ? never
   : DataWithResponseInit<ReturnableBodyOf<E>>;
 
+/** What a handler may return: a library route error or an `Effect` failing with a response. */
+type HandlerReturn = AnyRouteError | Effect.Effect<unknown, FailureResponse>;
+
 /**
- * What the registered handlers recover into loader/action data — derived from the
- * handlers' returns, but only for handlers whose error can actually occur in `E`:
+ * The inferred map of handler RETURN types, keyed by domain-error tag. Making the
+ * factory generic over *this* (rather than the whole handler map) is what lets
+ * `errorHandlers` contextually type each handler's `error` param from its key —
+ * no annotation needed — while still capturing precise return types for recovery.
+ */
+type HandlerReturns<DomainError extends Tagged> = Partial<
+  Record<DomainError["_tag"], HandlerReturn>
+>;
+
+/**
+ * The `errorHandlers` field shape for a given return map: one entry per registered
+ * tag, whose `error` is the matching domain error (so it autocompletes and types
+ * itself) and whose return is the precise, inferred `Returns[Tag]`.
+ */
+type ErrorHandlers<DomainError extends Tagged, Returns> = {
+  [Tag in keyof Returns]: (error: Extract<DomainError, { readonly _tag: Tag }>) => Returns[Tag];
+};
+
+/**
+ * What the registered handlers recover into loader/action data — from each
+ * handler's return type, but only for handlers whose error can actually occur in
+ * `E`:
  *  - a remapped `ReturnableDataError<B>` recovers as `DataWithResponseInit<B>`;
  *  - an `Effect.succeed(value)` recovers as `value`;
  *  - throwables, redirects and `Effect.fail(...)` contribute nothing.
  */
-type RecoverOf<Handlers, E> = {
-  [Tag in keyof Handlers]: Handlers[Tag] extends (error: infer Err) => infer R
-    ? [Extract<E, Err>] extends [never]
-      ? never
-      :
-          | (R extends ReturnableDataError<infer B> ? DataWithResponseInit<B> : never)
-          | (R extends Effect.Effect<infer SuccessValue, any, any> ? SuccessValue : never)
-    : never;
-}[keyof Handlers];
+type RecoverOf<DomainError extends Tagged, Returns, E> = {
+  [Tag in keyof Returns]: [Extract<E, Extract<DomainError, { readonly _tag: Tag }>>] extends [never]
+    ? never
+    :
+        | (Returns[Tag] extends ReturnableDataError<infer B> ? DataWithResponseInit<B> : never)
+        | (Returns[Tag] extends Effect.Effect<infer SuccessValue, any, any> ? SuccessValue : never);
+}[keyof Returns];
 
 /**
  * Errors the library deals with on the loader's behalf — so the loader needn't
@@ -86,31 +107,6 @@ type LibraryHandled<DomainError> = DomainError | AnyRouteError | HttpServerRespo
  * errors. The loader/action must handle these itself (catch or map them).
  */
 type Unhandled<E, DomainError> = Exclude<E, LibraryHandled<DomainError>>;
-
-/**
- * The shape a handler map must satisfy: an OPTIONAL handler per declared domain
- * error, keyed by its tag, taking that error and returning a library route error
- * or an `Effect` failing with a response. Used only as a validation constraint —
- * the concrete handler types stay precise via the `const Handlers` inference.
- */
-type ValidHandlers<DomainError extends Tagged> = {
-  [Tag in DomainError["_tag"]]?: (
-    error: Extract<DomainError, { readonly _tag: Tag }>,
-  ) => AnyRouteError | Effect.Effect<unknown, FailureResponse>;
-};
-
-/**
- * True when every registered handler is keyed by a declared domain error's tag and
- * returns a library route error or a failing `Effect`. A handler for an unknown tag
- * (`keyof Handlers` escaping the domain tags) or with a bad return makes it `false`.
- */
-type HandlersAreValid<Handlers, DomainError extends Tagged> = [keyof Handlers] extends [
-  DomainError["_tag"],
-]
-  ? Handlers extends ValidHandlers<DomainError>
-    ? true
-    : false
-  : false;
 
 // ---------------------------------------------------------------------------
 // Internal runtime helpers.
@@ -169,18 +165,18 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * Build `makeLoader` / `makeAction` for an application, wired to its domain errors.
  *
  * Declare the app's **domain errors** as the type argument, then register an
- * *optional* handler per domain error in `errorHandlers` (**annotate each handler's
- * param**). It's curried so you can pin the domain errors while the handler types
- * are still inferred:
+ * *optional* handler per domain error in `errorHandlers`. The handler keys
+ * autocomplete to your domain-error tags and each `error` parameter is typed from
+ * its key — no annotation needed. It's curried so you can pin the domain errors
+ * while the handler return types are still inferred:
  *
  * ```ts
  * type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
  *
  * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
  *   errorHandlers: {
- *     // throw → error boundary
- *     MyDomainError: (error: MyDomainError) =>
- *       Effect.fail(new Response(error.message, { status: 400 })),
+ *     // `error` is typed as MyDomainError automatically. throw → error boundary
+ *     MyDomainError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
  *     // DbError has no handler → falls through to the 500 default.
  *   },
  * });
@@ -217,39 +213,35 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * ```
  */
 export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() {
-  return function defineErrorHandlers<const Handlers = {}, RServices = never, ReqServices = never>(
-    config: {
-      /**
-       * An optional handler per declared domain error. Omit entirely to register
-       * none (e.g. when relying on `HttpServerRespondable` / the 500 default, or
-       * when there are no domain errors at all).
-       */
-      errorHandlers?: Handlers;
-      /**
-       * The app runtime that provides services to loader/action effects. When
-       * set, effects may require its services (`RServices`, inferred from here)
-       * without providing layers, and runs go through `runtime.runPromise`. When
-       * omitted, `RServices` is `never` and effects must require nothing.
-       */
-      runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
-      /**
-       * A React Router context key (see {@link createRequestContext}) holding a
-       * per-request effect `Context.Context`. Middleware sets it for each request;
-       * the runner reads `args.context.get(requestContext)` and provides those
-       * services to the effect. Loader/action effects may then require
-       * `ReqServices` (inferred from here) in addition to the runtime's services.
-       */
-      requestContext?: RequestContextKey<ReqServices>;
-    },
-    // Validation: a handler for a non-domain error, or one that doesn't return a
-    // route error / failing `Effect`, makes this rest parameter required and forces
-    // a compile error at the call.
-    ..._validate: HandlersAreValid<Handlers, DomainError> extends true
-      ? []
-      : [
-          eachHandlerMustBeForADeclaredDomainErrorAndReturnARouteErrorOrAnEffect: ValidHandlers<DomainError>,
-        ]
-  ) {
+  return function defineErrorHandlers<
+    const Returns extends HandlerReturns<DomainError> = {},
+    RServices = never,
+    ReqServices = never,
+  >(config: {
+    /**
+     * An optional handler per declared domain error, keyed by its tag. The keys
+     * autocomplete to your domain-error tags and each handler's `error` parameter
+     * is typed automatically — no annotation needed. A handler *remaps* the error
+     * by returning a library route error (`Respond.early` / `throw` / `redirect`)
+     * or an `Effect` (`Effect.succeed`/`fail`). Omit entirely to register none.
+     */
+    errorHandlers?: ErrorHandlers<DomainError, Returns>;
+    /**
+     * The app runtime that provides services to loader/action effects. When
+     * set, effects may require its services (`RServices`, inferred from here)
+     * without providing layers, and runs go through `runtime.runPromise`. When
+     * omitted, `RServices` is `never` and effects must require nothing.
+     */
+    runtime?: ManagedRuntime.ManagedRuntime<RServices, any>;
+    /**
+     * A React Router context key (a {@link RequestContextKey}) holding a
+     * per-request effect `Context.Context`. Middleware sets it for each request;
+     * the runner reads `args.context.get(requestContext)` and provides those
+     * services to the effect. Loader/action effects may then require
+     * `ReqServices` (inferred from here) in addition to the runtime's services.
+     */
+    requestContext?: RequestContextKey<ReqServices>;
+  }) {
     const runtime = config.runtime;
     const requestContextKey = config.requestContext;
 
@@ -281,7 +273,7 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
               DomainError
             >,
           ]
-    ): (args: Args) => Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>> {
+    ): (args: Args) => Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>> {
       return (args: Args) => {
         // The internal channel is deliberately loose (`unknown` success); the outer
         // cast restores the precise resolved type (computed from `E` and the handler
@@ -328,7 +320,7 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
         const result = runtime
           ? runtime.runPromise(provided)
           : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>);
-        return result as Promise<A | DirectRecover<E> | RecoverOf<Handlers, E>>;
+        return result as Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>>;
       };
     }
 

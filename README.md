@@ -77,11 +77,11 @@ type DomainErrors = FormError | BadInputError | DbError;
 // Curried: pin the domain errors, then the handler types are inferred.
 export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
+    // keys autocomplete to your domain-error tags; `error` is typed from its key.
     // recover: short-circuit and hand the reply to the component
-    FormError: (error: FormError) => baseRespond.early({ reply: error.reply }),
+    FormError: (error) => baseRespond.early({ reply: error.reply }),
     // throw: send to the error boundary
-    BadInputError: (error: BadInputError) =>
-      Effect.fail(new Response(error.message, { status: 400 })),
+    BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
   },
 });
 
@@ -92,8 +92,9 @@ export const Respond = {
 };
 ```
 
-> **Annotate each handler's parameter.** Handlers must be keyed by a declared domain error, and
-> the precise recover types are derived from the handler map's parameter and return types.
+> **No annotations needed.** Handler keys autocomplete to your declared domain-error tags, each
+> `error` parameter is typed from its key, and the precise recover types are derived from each
+> handler's return.
 
 ### 2. Write loaders/actions as effects
 

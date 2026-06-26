@@ -41,17 +41,18 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
 
 type DomainErrors = BadInputError | FormError | RecoverableError | GoAwayError;
 
+// Handler params are intentionally un-annotated — they're typed contextually from
+// their key — yet the recover types below stay precise.
 const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()({
   errorHandlers: {
     // throw → contributes nothing to the resolved data
-    BadInputError: (error: BadInputError) =>
-      Effect.fail(new Response(error.message, { status: 400 })),
+    BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
     // recover → { reply: string }
-    FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+    FormError: (error) => Respond.early({ reply: error.reply }),
     // recover → { recovered: number }
-    RecoverableError: (error: RecoverableError) => Effect.succeed({ recovered: error.fallback }),
+    RecoverableError: (error) => Effect.succeed({ recovered: error.fallback }),
     // throw → contributes nothing
-    GoAwayError: (_error: GoAwayError) => Respond.throw({ message: "go away" }),
+    GoAwayError: (_error) => Respond.throw({ message: "go away" }),
   },
 });
 
