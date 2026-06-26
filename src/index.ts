@@ -1,6 +1,5 @@
 export {
   isRouteError,
-  Respond,
   ReturnableDataError,
   ThrowableDataError,
   ThrowableRedirectError,

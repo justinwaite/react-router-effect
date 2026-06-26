@@ -29,7 +29,7 @@ const requestContext: RequestContextKey<RequestContext> = createContext();
 const runtime = ManagedRuntime.make(AppConfig.layer);
 
 describe("requestContext satisfies an effect's request-scoped services", () => {
-  const { makeLoader, makeAction } = makeLoaderOrActionFactory()({ requestContext });
+  const { makeLoader, makeAction } = makeLoaderOrActionFactory()(() => ({ requestContext }));
 
   it("an effect requiring the request service type-checks", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
@@ -64,7 +64,7 @@ describe("requestContext satisfies an effect's request-scoped services", () => {
 });
 
 describe("runtime services and request services compose", () => {
-  const { makeLoader } = makeLoaderOrActionFactory()({ runtime, requestContext });
+  const { makeLoader } = makeLoaderOrActionFactory()(() => ({ runtime, requestContext }));
 
   it("an effect may require both", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
@@ -91,7 +91,7 @@ describe("runtime services and request services compose", () => {
 });
 
 describe("without a requestContext, request services are not available", () => {
-  const { makeLoader } = makeLoaderOrActionFactory()({ runtime });
+  const { makeLoader } = makeLoaderOrActionFactory()(() => ({ runtime }));
 
   it("requiring a request-scoped service fails to type-check", () => {
     // @ts-expect-error — no requestContext is configured, so RequestContext is not

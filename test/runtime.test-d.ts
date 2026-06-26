@@ -2,7 +2,7 @@ import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
 import type { LoaderFunctionArgs } from "react-router";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory, Respond } from "../src/index.ts";
+import { makeLoaderOrActionFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // A runtime provides services to loader/action effects: an effect may require
@@ -25,7 +25,7 @@ class NotInRuntime extends Context.Service<NotInRuntime>()("test/NotInRuntime", 
 const runtime = ManagedRuntime.make(InRuntime.layer);
 
 describe("a configured runtime satisfies an effect's required services", () => {
-  const { makeLoader, makeAction } = makeLoaderOrActionFactory()({ runtime });
+  const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory()(() => ({ runtime }));
 
   it("an effect requiring a runtime-provided service type-checks", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
@@ -76,7 +76,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
 });
 
 describe("without a runtime, effects must require nothing", () => {
-  const { makeLoader } = makeLoaderOrActionFactory()({});
+  const { makeLoader } = makeLoaderOrActionFactory()(() => ({}));
 
   it("requiring any service fails to type-check", () => {
     // @ts-expect-error — no runtime is configured, so RServices is `never` and the
@@ -98,19 +98,19 @@ describe("errorHandlers is optional", () => {
   class SomeDomainError extends Data.TaggedError("SomeDomainError")<{ readonly m: string }> {}
 
   it("an empty config produces makeLoader / makeAction", () => {
-    const factory = makeLoaderOrActionFactory()({});
+    const factory = makeLoaderOrActionFactory()(() => ({}));
     expectTypeOf(factory.makeLoader).toBeFunction();
     expectTypeOf(factory.makeAction).toBeFunction();
   });
 
   it("a runtime-only config (no errorHandlers) produces makeLoader / makeAction", () => {
-    const factory = makeLoaderOrActionFactory()({ runtime });
+    const factory = makeLoaderOrActionFactory()(() => ({ runtime }));
     expectTypeOf(factory.makeLoader).toBeFunction();
     expectTypeOf(factory.makeAction).toBeFunction();
   });
 
   it("declared domain errors with no errorHandlers still type-check", () => {
-    const { makeLoader } = makeLoaderOrActionFactory<SomeDomainError>()({});
+    const { makeLoader } = makeLoaderOrActionFactory<SomeDomainError>()(() => ({}));
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         // No handler registered, but it's a declared domain error → flows to 500.

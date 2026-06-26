@@ -1,7 +1,7 @@
 import { Data, Effect } from "effect";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory, Respond } from "../src/index.ts";
+import { makeLoaderOrActionFactory } from "../src/index.ts";
 
 class BadInputError extends Data.TaggedError("BadInputError")<{ readonly message: string }> {}
 /** A second domain error, declared but not registered with a handler. */
@@ -18,59 +18,59 @@ type DomainErrors = BadInputError | OtherDomainError;
 
 describe("factory handler validation", () => {
   it("accepts handlers that return a library route error", () => {
-    const factory = makeLoaderOrActionFactory<DomainErrors>()({
+    const factory = makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
         BadInputError: (error: BadInputError) => Respond.early({ message: error.message }),
       },
-    });
+    }));
     expectTypeOf(factory.makeLoader).toBeFunction();
     expectTypeOf(factory.makeAction).toBeFunction();
   });
 
   it("accepts handlers that return a failing Effect", () => {
-    const factory = makeLoaderOrActionFactory<DomainErrors>()({
+    const factory = makeLoaderOrActionFactory<DomainErrors>()(() => ({
       errorHandlers: {
         BadInputError: (error: BadInputError) =>
           Effect.fail(new Response(error.message, { status: 400 })),
       },
-    });
+    }));
     expectTypeOf(factory.makeLoader).toBeFunction();
   });
 
   it("accepts a factory that registers no handler for a declared domain error", () => {
     // OtherDomainError is declared but unhandled — it'll fall through to the 500.
-    const factory = makeLoaderOrActionFactory<DomainErrors>()({
+    const factory = makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
         BadInputError: (error: BadInputError) => Respond.early({ message: error.message }),
       },
-    });
+    }));
     expectTypeOf(factory.makeLoader).toBeFunction();
   });
 
   it("rejects a handler that returns a bare (non-route-error) value", () => {
-    makeLoaderOrActionFactory<DomainErrors>()({
+    makeLoaderOrActionFactory<DomainErrors>()(() => ({
       errorHandlers: {
         // @ts-expect-error — 42 is neither a library route error nor a failing Effect.
         BadInputError: (_error: BadInputError) => 42,
       },
-    });
+    }));
   });
 
   it("rejects a handler whose Effect fails with a non-response value", () => {
-    makeLoaderOrActionFactory<DomainErrors>()({
+    makeLoaderOrActionFactory<DomainErrors>()(() => ({
       errorHandlers: {
         // @ts-expect-error — Effect.fail("boom") rejects with a string, not a Response/Data.
         BadInputError: (_error: BadInputError) => Effect.fail("boom"),
       },
-    });
+    }));
   });
 
   it("rejects a handler for an error that isn't a declared domain error", () => {
-    makeLoaderOrActionFactory<DomainErrors>()({
+    makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
         // @ts-expect-error — NonDomainError isn't in DomainErrors, so it can't be registered.
         NonDomainError: (error: NonDomainError) => Respond.throw({ x: error.x }),
       },
-    });
+    }));
   });
 });
