@@ -48,29 +48,27 @@ describe("factory handler validation", () => {
   });
 
   it("rejects a handler that returns a bare (non-route-error) value", () => {
-    // The invalid handler makes the factory's validation argument required, so the
-    // call errors here (missing argument) rather than at the handler itself.
-    // @ts-expect-error — 42 is neither a library route error nor a failing Effect.
     makeLoaderOrActionFactory<DomainErrors>()({
       errorHandlers: {
+        // @ts-expect-error — 42 is neither a library route error nor a failing Effect.
         BadInputError: (_error: BadInputError) => 42,
       },
     });
   });
 
   it("rejects a handler whose Effect fails with a non-response value", () => {
-    // @ts-expect-error — Effect.fail("boom") rejects with a string, not a Response/Data.
     makeLoaderOrActionFactory<DomainErrors>()({
       errorHandlers: {
+        // @ts-expect-error — Effect.fail("boom") rejects with a string, not a Response/Data.
         BadInputError: (_error: BadInputError) => Effect.fail("boom"),
       },
     });
   });
 
   it("rejects a handler for an error that isn't a declared domain error", () => {
-    // @ts-expect-error — NonDomainError isn't in DomainErrors, so it can't be registered.
     makeLoaderOrActionFactory<DomainErrors>()({
       errorHandlers: {
+        // @ts-expect-error — NonDomainError isn't in DomainErrors, so it can't be registered.
         NonDomainError: (error: NonDomainError) => Respond.throw({ x: error.x }),
       },
     });
