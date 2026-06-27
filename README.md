@@ -54,8 +54,10 @@ A **declared domain error** may be left unhandled:
 
 **Any other error** a route consumes — a service-specific error that isn't a declared domain
 error — **must be handled** in the loader/action (caught or mapped), or `makeLoader`/`makeAction`
-fails to type-check. This gives app-wide defaults for declared errors while enforcing explicit
-handling of feature/service-specific ones.
+fails to type-check with a message naming the unhandled error(s). This gives app-wide defaults for
+declared errors while enforcing explicit handling of feature/service-specific ones. (Likewise, an
+effect that requires a service neither the `runtime` nor the `requestContext` provides fails to
+type-check with a message naming the missing service.)
 
 ## Usage
 

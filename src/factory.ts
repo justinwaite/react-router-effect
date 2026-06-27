@@ -113,6 +113,43 @@ type LibraryHandled<DomainError> = DomainError | AnyRouteError | HttpServerRespo
 type Unhandled<E, DomainError> = Exclude<E, LibraryHandled<DomainError>>;
 
 // ---------------------------------------------------------------------------
+// The call-site diagnostic.
+// ---------------------------------------------------------------------------
+
+/**
+ * A readable compile-time diagnostic. It's intersected onto the *effect return type*
+ * of `fn` — so the effect's `A`/`E`/`R` still infer directly (naked), while a mismatch
+ * reports this message, and the offending types, *at the `makeLoader`/`makeAction`
+ * call* instead of the opaque "Expected 2 arguments". Resolves to `unknown` (a no-op
+ * intersection) when the effect is fully handled and all its requirements are provided:
+ *
+ *  - **Unhandled error** — the effect can fail with something that isn't a declared
+ *    domain error, a library route error, or respondable; `unhandledErrors` names them.
+ *  - **Missing requirement** — the effect requires a service that neither the
+ *    `runtime` nor the `requestContext` provides; `missingRequirements` names them.
+ *
+ * The message lives in an *inline* object literal (no named alias) so tsc/tsgo print
+ * its text verbatim rather than collapsing it to an alias name.
+ */
+/**
+ * Names the unhandled errors for the diagnostic: a tagged error becomes its `_tag`
+ * (the string you'd pass to `Effect.catchTag`), anything untagged stays as its type.
+ */
+type NameError<U> = U extends { readonly _tag: infer Tag extends string } ? Tag : U;
+
+type Diagnose<E, R, DomainError, Provided> = [Unhandled<E, DomainError>] extends [never]
+  ? [Exclude<R, Provided>] extends [never]
+    ? unknown
+    : {
+        "react-router-effect": "This loader/action requires a service the factory does not provide. Add it to your runtime or requestContext, or handle it in the effect.";
+        missingRequirements: Exclude<R, Provided>;
+      }
+  : {
+      "react-router-effect": "This loader/action can fail with an error the library does not handle. Catch it in the effect (e.g. Effect.catchTag), make it Respondable, or add it to your DomainError union.";
+      unhandledErrors: NameError<Unhandled<E, DomainError>>;
+    };
+
+// ---------------------------------------------------------------------------
 // Internal runtime helpers.
 // ---------------------------------------------------------------------------
 
@@ -285,34 +322,31 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
     const isUserError = (e: unknown): e is DomainError =>
       typeof e === "object" && e !== null && "_tag" in e && (e as Tagged)._tag in userHandlers;
 
-    function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E>(
-      // The effect may require `RServices` (provided by the configured `runtime`)
-      // and `ReqServices` (provided per-request from `requestContext`). Both are
-      // `never` when their source isn't configured, so the effect must require
-      // nothing extra.
-      fn: (args: Args) => Effect.Effect<A, E, RServices | ReqServices>,
-      // If the effect can still fail with something the library won't handle — a
-      // service-specific error that isn't a declared domain error, a library route
-      // error, or respondable — this rest parameter becomes required and the call
-      // fails to type-check, forcing the loader/action to handle it.
-      ..._handle: [Unhandled<E, DomainError>] extends [never]
-        ? []
-        : [
-            theseErrorsAreNotDomainErrorsAndMustBeHandledInTheLoaderOrAction: Unhandled<
-              E,
-              DomainError
-            >,
-          ]
+    function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E, R>(
+      // `A`/`E`/`R` infer directly from the effect (naked, so inference stays robust).
+      // The diagnostic is intersected onto the effect's return type: when the effect
+      // requires a service the factory doesn't provide (`R` ⊄ runtime+requestContext),
+      // or can fail with something the library won't handle, `Diagnose` becomes a
+      // message object the effect isn't assignable to — so this argument fails to
+      // type-check with a readable explanation, and the offending types, right here.
+      fn: (
+        args: Args,
+      ) => Effect.Effect<A, E, R> & Diagnose<E, R, DomainError, RServices | ReqServices>,
     ): (args: Args) => Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>> {
+      // The diagnostic is irrelevant inside the body (it's `unknown` for any valid
+      // call); treat `fn` as the plain effect-returning function it is.
+      const run = fn as unknown as (
+        args: Args,
+      ) => Effect.Effect<unknown, E, RServices | ReqServices>;
       return (args: Args) => {
         // The internal channel is deliberately loose (`unknown` success); the outer
         // cast restores the precise resolved type (computed from `E` and the handler
         // map). Sound at runtime — the values produced are exactly those types.
-        const program = fn(args).pipe(
+        const program = run(args).pipe(
           // Catch the whole error channel and dispatch. The refinement is `e is E`
           // (provably ⊆ E, and a *refinement* not a bare predicate — the predicate
-          // overload crashes tsc over a generic `E`). A declared domain error with
-          // no handler (and not respondable) falls through to the 500 default.
+          // overload crashes tsc over a generic `E`). A declared domain error with no
+          // handler (and not respondable) falls through to the 500 default.
           Effect.catchIf(
             (_e): _e is E => true,
             (e): Effect.Effect<unknown, FailureResponse> => {
