@@ -35,7 +35,7 @@ export type AnyRouteError =
  * extensions) so your app imports a single `Respond`:
  *
  * ```ts
- * export const { makeLoader, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+ * export const { makeLoader, Respond } = makeEffectRouteFactory<DomainErrors>()(
  *   (Respond) => ({
  *     respond: { formError: (reply) => new FormError({ reply }) },
  *     errorHandlers: { FormError: (e) => Respond.early({ reply: e.reply }) },

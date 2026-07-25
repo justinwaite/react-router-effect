@@ -3,7 +3,7 @@ import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
 import type { LoaderFunctionArgs } from "react-router";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory } from "../src/index.ts";
+import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // The factory's contract: app-wide *declared domain errors* may be left to the
@@ -28,7 +28,7 @@ type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
 /** A service-specific error a single route consumes — NOT a declared domain error. */
 class FooServiceError extends Data.TaggedError("FooServiceError")<{ readonly reason: number }> {}
 
-const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
+const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()(() => ({
   errorHandlers: {
     MyDomainError: (error: MyDomainError) =>
       Effect.fail(new Response(error.message, { status: 400 })),
@@ -147,5 +147,55 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
       ),
     );
     expectTypeOf(loader).toBeFunction();
+  });
+});
+
+describe("an `any` error/requirement doesn't trigger a confusing diagnostic", () => {
+  it("an `any` error channel type-checks instead of reporting unhandledErrors: any", () => {
+    // An unrelated mistake elsewhere (a typo, a bad call) commonly collapses the
+    // error channel to `any` rather than a clean type. Diagnose must stand down
+    // here so tsc's own error at the real mistake isn't buried under ours.
+    const loader = makeLoader((_a: LoaderFunctionArgs) =>
+      Effect.gen(function* () {
+        yield* Effect.fail(1 as any);
+        return true;
+      }),
+    );
+    expectTypeOf(loader).toBeFunction();
+  });
+
+  it("an `any` requirement channel type-checks instead of reporting missingRequirements: any", () => {
+    const loader = makeLoader((_a: LoaderFunctionArgs) =>
+      Effect.gen(function* () {
+        yield* Effect.succeed(1) as Effect.Effect<number, never, any>;
+        return true;
+      }),
+    );
+    expectTypeOf(loader).toBeFunction();
+  });
+
+  it("a genuine unrelated mistake doesn't grow a second, confusing error at the makeLoader call", () => {
+    // The real, useful error is here — a plain typo. Without the `IsAny` guard,
+    // referencing an undefined name collapses the effect's error channel to
+    // `any`, and `makeLoader` below used to *also* report a confusing
+    // "unhandledErrors: any" diagnostic on top of this one.
+    const undefinedVarLoader = makeLoader((_a: LoaderFunctionArgs) =>
+      Effect.gen(function* () {
+        // @ts-expect-error — `somethingUndefined` doesn't exist; that's the point.
+        yield* Effect.fail(somethingUndefined);
+        return true;
+      }),
+    );
+    expectTypeOf(undefinedVarLoader).toBeFunction();
+
+    const fn = (a: number, b: number) => a + b;
+    const missingArgsError = makeLoader((_a: LoaderFunctionArgs) =>
+      Effect.gen(function* () {
+        // @ts-expect-error - should surface an error specifying we are expecting two arguments
+        yield* Effect.succeed(fn(a));
+        return true;
+      }),
+    );
+    expectTypeOf(missingArgsError).toBeFunction();
   });
 });

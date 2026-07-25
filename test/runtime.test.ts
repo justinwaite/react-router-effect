@@ -3,7 +3,7 @@ import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
 import type { LoaderFunctionArgs } from "react-router";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory } from "../src/index.ts";
+import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures.
@@ -36,26 +36,23 @@ type DomainErrors =
   | NotAuthorizedError
   | UnhandledDomainError;
 
-const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
-  (Respond) => ({
-    errorHandlers: {
-      // throw → error boundary, via a raw `Response`
-      BadInputError: (error: BadInputError) =>
-        Effect.fail(new Response(error.message, { status: 400 })),
-      // recover → returnable library error
-      FormError: (error: FormError) => Respond.early({ reply: error.reply }),
-      // recover → Effect.succeed
-      RecoverableError: (error: RecoverableError) => Effect.succeed({ recovered: error.fallback }),
-      // throw → returnable library error
-      GoAwayError: (_error: GoAwayError) => Respond.throw({ message: "go away" }, 418),
-      // throw → redirect library error
-      RedirectingError: (error: RedirectingError) => Respond.redirect(error.to, 302),
-      // a registered handler still wins for a respondable error
-      NotAuthorizedError: (_error: NotAuthorizedError) =>
-        Respond.early({ handledExplicitly: true }),
-    },
-  }),
-);
+const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+  errorHandlers: {
+    // throw → error boundary, via a raw `Response`
+    BadInputError: (error: BadInputError) =>
+      Effect.fail(new Response(error.message, { status: 400 })),
+    // recover → returnable library error
+    FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+    // recover → Effect.succeed
+    RecoverableError: (error: RecoverableError) => Effect.succeed({ recovered: error.fallback }),
+    // throw → returnable library error
+    GoAwayError: (_error: GoAwayError) => Respond.throw({ message: "go away" }, 418),
+    // throw → redirect library error
+    RedirectingError: (error: RedirectingError) => Respond.redirect(error.to, 302),
+    // a registered handler still wins for a respondable error
+    NotAuthorizedError: (_error: NotAuthorizedError) => Respond.early({ handledExplicitly: true }),
+  },
+}));
 
 const args = {} as LoaderFunctionArgs;
 
@@ -221,7 +218,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
   });
 
   it("auto-renders an unregistered error that implements HttpServerRespondable", async () => {
-    const ownFactory = makeLoaderOrActionFactory()(() => ({ errorHandlers: {} }));
+    const ownFactory = makeEffectRouteFactory()(() => ({ errorHandlers: {} }));
     const loader = ownFactory.makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         yield* new NotAuthorizedError();
@@ -269,5 +266,75 @@ describe("makeAction", () => {
       type: "DataWithResponseInit",
       data: { reply: "bad form" },
     });
+  });
+});
+
+describe("makeMiddleware", () => {
+  it("runs next() and resolves with its result", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+      errorHandlers: {
+        BadInputError: (error: BadInputError) =>
+          Effect.fail(new Response(error.message, { status: 400 })),
+        FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+      },
+    }));
+    const middleware = factory.makeMiddleware((_args, next) => next());
+    const next = async () => "downstream-result";
+    await expect(middleware(args, next)).resolves.toBe("downstream-result");
+  });
+
+  it("recovers when a handler returns Respond.early, without calling next()", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+      errorHandlers: {
+        FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+      },
+    }));
+    const middleware = factory.makeMiddleware((_args, _next) =>
+      Effect.gen(function* () {
+        yield* new FormError({ reply: "blocked" });
+        return "unreachable" as const;
+      }),
+    );
+    const next = async () => "downstream-result";
+    await expect(middleware(args, next)).resolves.toMatchObject({
+      type: "DataWithResponseInit",
+      data: { reply: "blocked" },
+    });
+  });
+
+  it("throws a directly-raised Respond.redirect as a redirect Response", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
+    const middleware = factory.makeMiddleware((_args, _next) =>
+      Effect.gen(function* () {
+        yield* Respond.redirect("/login", 302);
+        return "unreachable" as const;
+      }),
+    );
+    const next = async () => "downstream-result";
+    const result = await settle(middleware(args, next));
+    expect(result.ok).toBe(false);
+    const res = result.ok ? undefined : result.error;
+    expect(res).toBeInstanceOf(Response);
+    expect((res as Response).status).toBe(302);
+    expect((res as Response).headers.get("location")).toBe("/login");
+  });
+
+  it("surfaces a downstream next() rejection as a typed FailureResponse", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
+    const middleware = factory.makeMiddleware((_args, next) =>
+      Effect.gen(function* () {
+        return yield* next();
+      }),
+    );
+    const downstreamRedirect = new Response(null, {
+      status: 302,
+      headers: { location: "/elsewhere" },
+    });
+    const next = async () => {
+      throw downstreamRedirect;
+    };
+    const result = await settle(middleware(args, next));
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error).toBe(downstreamRedirect);
   });
 });

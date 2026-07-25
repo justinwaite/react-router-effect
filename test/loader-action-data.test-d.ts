@@ -8,7 +8,7 @@ import {
 } from "react-router";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory } from "../src/index.ts";
+import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // What a *component* actually reads. `useLoaderData<typeof loader>()` returns
@@ -43,22 +43,20 @@ type DomainErrors = BadInputError | FormError | RecoverableError | GoAwayError;
 
 // Handler params are intentionally un-annotated — they're typed contextually from
 // their key — yet the recover types below stay precise.
-const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
-  (Respond) => ({
-    errorHandlers: {
-      // throw → contributes nothing to the resolved data
-      BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
-      // recover → { reply: string }
-      FormError: (error) => Respond.early({ reply: error.reply }),
-      // recover → { recovered: number }
-      RecoverableError: (error) => Effect.succeed({ recovered: error.fallback }),
-      // throw → contributes nothing
-      GoAwayError: (_error) => Respond.throw({ message: "go away" }),
-    },
-  }),
-);
+const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+  errorHandlers: {
+    // throw → contributes nothing to the resolved data
+    BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
+    // recover → { reply: string }
+    FormError: (error) => Respond.early({ reply: error.reply }),
+    // recover → { recovered: number }
+    RecoverableError: (error) => Effect.succeed({ recovered: error.fallback }),
+    // throw → contributes nothing
+    GoAwayError: (_error) => Respond.throw({ message: "go away" }),
+  },
+}));
 
-const empty = makeLoaderOrActionFactory()(() => ({ errorHandlers: {} }));
+const empty = makeEffectRouteFactory()(() => ({ errorHandlers: {} }));
 
 // ---------------------------------------------------------------------------
 // loaderData = the effect's own success ∪ directly-recovered bodies ∪ the

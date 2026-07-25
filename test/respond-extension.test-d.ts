@@ -1,7 +1,7 @@
 import { Data, Effect } from "effect";
 import { describe, expectTypeOf, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory } from "../src/index.ts";
+import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // The inner config is a *builder* that receives the base `Respond` (so handlers
@@ -14,14 +14,14 @@ type DomainErrors = FormError;
 
 describe("the factory's returned Respond", () => {
   it("carries the base helpers", () => {
-    const { Respond } = makeLoaderOrActionFactory<DomainErrors>()(() => ({}));
+    const { Respond } = makeEffectRouteFactory<DomainErrors>()(() => ({}));
     expectTypeOf(Respond.early).toBeFunction();
     expectTypeOf(Respond.throw).toBeFunction();
     expectTypeOf(Respond.redirect).toBeFunction();
   });
 
   it("merges in `respond` extensions with their precise types", () => {
-    const { Respond } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
+    const { Respond } = makeEffectRouteFactory<DomainErrors>()(() => ({
       respond: {
         formError: (reply: string) => new FormError({ reply }),
       },
@@ -32,14 +32,14 @@ describe("the factory's returned Respond", () => {
   });
 
   it("hands the base Respond to the builder for use in errorHandlers", () => {
-    const { makeLoader } = makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
+    const { makeLoader } = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
       errorHandlers: { FormError: (error) => Respond.early({ reply: error.reply }) },
     }));
     expectTypeOf(makeLoader).toBeFunction();
   });
 
   it("an extension helper's domain error is recoverable end-to-end", () => {
-    const { makeLoader, Respond } = makeLoaderOrActionFactory<DomainErrors>()((respond) => ({
+    const { makeLoader, Respond } = makeEffectRouteFactory<DomainErrors>()((respond) => ({
       respond: { formError: (reply: string) => new FormError({ reply }) },
       errorHandlers: { FormError: (error) => respond.early({ reply: error.reply }) },
     }));
