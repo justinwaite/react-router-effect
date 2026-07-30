@@ -2,12 +2,13 @@
   "$schema": "https://schemastore.org/package.json",
   "name": "react-router-effect",
   "version": "0.6.1",
-  "description": "Wrap React Router loaders/actions with Effect, with typed recover/throw/redirect error handling.",
+  "description": "Wrap React Router framework-mode route modules with Effect, with typed recover/throw/redirect error handling.",
   "keywords": [
     "action",
     "effect",
     "error-handling",
     "loader",
+    "middleware",
     "react-router",
     "typescript"
   ],
@@ -50,27 +51,26 @@
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^2.31.1",
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "@vitejs/plugin-react": "^6.0.1",
-    "@vitest/browser": "4.1.9",
-    "@vitest/browser-playwright": "4.1.9",
-    "effect": "4.0.0-beta.88",
+    "@vitejs/plugin-react": "^6.0.4",
+    "@vitest/browser": "4.1.10",
+    "@vitest/browser-playwright": "4.1.10",
+    "effect": "4.0.0-beta.101",
     "playwright": "1.60.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-router": "^8.0.0",
-    "typescript": "^6.0.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0",
+    "typescript": "^7.0.2",
     "vite-plus": "catalog:",
     "vitest": "catalog:",
     "vitest-browser-react": "^2.2.0"
   },
   "peerDependencies": {
-    "effect": "^4.0.0-beta.88",
-    "react-router": "^7.16.0 || ^8.0.0"
+    "effect": "^4.0.0-beta.101",
+    "react-router": "^7.16.0 || ^8.3.0"
   },
   "devEngines": {
     "packageManager": {

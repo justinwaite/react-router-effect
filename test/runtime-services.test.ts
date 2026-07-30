@@ -2,7 +2,7 @@ import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
 import type { LoaderFunctionArgs } from "react-router";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory } from "../src/index.ts";
+import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // A small app runtime: a `Database` and a `Greeter` that depends on it. The
@@ -63,7 +63,7 @@ async function settle<T>(promise: Promise<T>) {
 describe("makeLoader / makeAction with a runtime", () => {
   // No domain errors, no handlers — just a runtime. Exercises the optional
   // `errorHandlers` path too.
-  const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory()(() => ({ runtime }));
+  const { makeLoader, makeAction, Respond } = makeEffectRouteFactory()(() => ({ runtime }));
 
   it("resolves an effect that requires a runtime service (no provide)", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
@@ -132,7 +132,7 @@ describe("makeLoader / makeAction with a runtime", () => {
 describe("runtime + registered domain-error handlers compose", () => {
   class GreetError extends Data.TaggedError("GreetError")<{ readonly reason: string }> {}
 
-  const { makeLoader } = makeLoaderOrActionFactory<GreetError>()((Respond) => ({
+  const { makeLoader } = makeEffectRouteFactory<GreetError>()((Respond) => ({
     runtime,
     errorHandlers: {
       GreetError: (error: GreetError) => Respond.early({ failed: error.reason }),
@@ -161,14 +161,14 @@ describe("runtime + registered domain-error handlers compose", () => {
 
 describe("errorHandlers is optional", () => {
   it("a factory configured with an empty config still works", async () => {
-    const { makeLoader } = makeLoaderOrActionFactory()(() => ({}));
+    const { makeLoader } = makeEffectRouteFactory()(() => ({}));
     const loader = makeLoader((_a: LoaderFunctionArgs) => Effect.succeed(123));
     await expect(loader(args)).resolves.toBe(123);
   });
 
   it("an unhandled non-domain error falls through to a 500 with no handlers", async () => {
     class SomeError extends Data.TaggedError("SomeError")<{}> {}
-    const { makeLoader, Respond } = makeLoaderOrActionFactory()(() => ({}));
+    const { makeLoader, Respond } = makeEffectRouteFactory()(() => ({}));
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       // No domain errors are declared, so this must be handled inline; mapping it
       // to a library route error (throw) keeps it type-correct and exercises the

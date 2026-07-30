@@ -1,13 +1,13 @@
 import { Data } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeLoaderOrActionFactory, ReturnableDataError } from "../src/index.ts";
+import { makeEffectRouteFactory, ReturnableDataError } from "../src/index.ts";
 
 class FormError extends Data.TaggedError("FormError")<{ readonly reply: string }> {}
 
 describe("respond extension (runtime)", () => {
   it("returns the base helpers merged with custom ones", () => {
-    const { Respond } = makeLoaderOrActionFactory()(() => ({
+    const { Respond } = makeEffectRouteFactory()(() => ({
       respond: { formError: (reply: string) => new FormError({ reply }) },
     }));
     // the custom helper constructs the domain error

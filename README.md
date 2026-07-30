@@ -1,10 +1,10 @@
 # react-router-effect
 
-Wrap [React Router](https://reactrouter.com) framework-mode loaders and actions with
+Wrap [React Router](https://reactrouter.com) framework-mode loaders, actions, and middleware with
 [Effect](https://effect.website), and get **typed, declarative error handling** for free.
 
-Write your loader/action as an `Effect`. When it short-circuits with a tagged error, the
-library decides — based on handlers you register once — whether to **recover** (return data
+Write your loader/action/middleware as an `Effect`. When it short-circuits with a tagged error,
+the library decides — based on handlers you register once — whether to **recover** (return data
 the component reads via `useLoaderData`) or **throw** (send it to the error boundary or issue
 a redirect). The resolved type of every loader/action reflects exactly what it can return.
 
@@ -66,7 +66,7 @@ type-check with a message naming the missing service.)
 ```ts
 // app/route.server.ts
 import { Data, Effect } from "effect";
-import { makeLoaderOrActionFactory } from "react-router-effect";
+import { makeEffectRouteFactory } from "react-router-effect";
 
 class FormError extends Data.TaggedError("FormError")<{ reply: SubmissionResponse }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ message: string }> {}
@@ -80,7 +80,7 @@ type DomainErrors = FormError | BadInputError | DbError;
 // is a *builder* — it receives `Respond` (the library's `early`/`throw`/`redirect`)
 // so your handlers can recover/throw, and the factory hands back a single `Respond`
 // for your routes to import (no auto-import ambiguity with a library export).
-export const { makeLoader, makeAction, Respond } = makeLoaderOrActionFactory<DomainErrors>()(
+export const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()(
   (Respond) => ({
     // App-specific helpers — merged onto the returned `Respond` (base helpers win):
     respond: {
@@ -130,6 +130,36 @@ type LoaderData = Route.ComponentProps["loaderData"];
 //   ( BadInputError throws, so it never appears here )
 ```
 
+### 3. Write middleware as effects
+
+`makeMiddleware` wraps a [middleware](https://reactrouter.com/how-to/middleware) function the
+same way, wired to the same `errorHandlers`. Pin it to the route's generated
+`Route.MiddlewareFunction` — middleware has no separate args-only type, so the whole function
+type is the type argument — or omit it to default to React Router's own `MiddlewareFunction`:
+
+```ts
+// app/routes/profile.ts
+import { Effect } from "effect";
+import { makeMiddleware, Respond } from "../route.server.ts";
+import type { Route } from "./+types/profile";
+
+export const middleware: Route.MiddlewareFunction[] = [
+  makeMiddleware<Route.MiddlewareFunction>(({ request }, next) =>
+    Effect.gen(function* () {
+      const user = yield* getUser(request); // may fail with FormError / BadInputError
+      if (!user) yield* Respond.redirect("/login"); // throw → redirect, same as a loader
+      return yield* next(); // run the rest of the chain
+    }),
+  ),
+];
+```
+
+`next` is handed to the effect as `() => Effect.Effect<Result, FailureResponse>` (React Router's
+own `next: () => Promise<Result>`, wrapped) — call it with `yield*` to run downstream
+loaders/middleware. A downstream throw (e.g. a nested loader's redirect) surfaces as a typed
+failure rather than a rejected promise, so it flows through the same recover/throw handling as
+a loader or action.
+
 ### Self-rendering domain errors
 
 If a domain error implements `HttpServerRespondable`, you don't need to register a handler —
@@ -159,7 +189,7 @@ import { ManagedRuntime } from "effect";
 export const appRuntime = ManagedRuntime.make(AppLayer); // provides Database, MyService, ...
 
 // app/route.server.ts
-export const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
+export const { makeLoader, makeAction } = makeEffectRouteFactory<DomainErrors>()(() => ({
   runtime: appRuntime,
   errorHandlers: { ... },
 }));
@@ -180,8 +210,8 @@ runtime provides type-checks, while requiring one it _doesn't_ is a compile erro
 `errorHandlers` is optional too — configure a factory with just a runtime, or with nothing:
 
 ```ts
-makeLoaderOrActionFactory()(() => ({ runtime }));
-makeLoaderOrActionFactory()(() => ({}));
+makeEffectRouteFactory()(() => ({ runtime }));
+makeEffectRouteFactory()(() => ({}));
 ```
 
 ### Per-request services from middleware
@@ -216,7 +246,7 @@ export const middleware: Route.MiddlewareFunction[] = [
 ];
 
 // app/route.server.ts — wire the same key into the factory:
-export const { makeLoader } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
+export const { makeLoader } = makeEffectRouteFactory<DomainErrors>()(() => ({
   runtime: appRuntime,
   requestContext,
 }));
@@ -236,12 +266,13 @@ else is a compile error. `RequestContextKey<ReqServices>` is a type alias for
 
 ## API
 
-- **`makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond? }))`**
-  → `{ makeLoader, makeAction, Respond }` (the two makers are the same wrapper). The config is a
-  _builder_ that receives the base `Respond`; all its fields are optional. The returned `Respond` is
-  the base helpers merged with your `respond` extensions (base helpers win). A non-domain error left
-  in a loader/action's error channel — or a required service that neither the `runtime` nor the
-  `requestContext` provides — is a compile error.
+- **`makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond? }))`**
+  → `{ makeLoader, makeAction, makeMiddleware, Respond }` (`makeLoader`/`makeAction` are the same
+  wrapper; `makeMiddleware` wraps a `Route.MiddlewareFunction`, defaulting to react-router's own
+  `MiddlewareFunction`). The config is a _builder_ that receives the base `Respond`; all its fields
+  are optional. The returned `Respond` is the base helpers merged with your `respond` extensions
+  (base helpers win). A non-domain error left in a handler's error channel — or a required service
+  that neither the `runtime` nor the `requestContext` provides — is a compile error.
 - **`RequestContextKey<ReqServices>`** — type of the React Router context key for a per-request
   effect context (`RouterContext<Context.Context<ReqServices>>`).
 - **`Respond`** (returned from the factory) — `early` (recover), `throw`, `redirect`, plus any

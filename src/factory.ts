@@ -6,7 +6,9 @@ import {
   type ActionFunctionArgs,
   type UNSAFE_DataWithResponseInit as DataWithResponseInit,
   type LoaderFunctionArgs,
+  type MiddlewareFunction,
   type RouterContext,
+  type RouterContextProvider,
 } from "react-router";
 
 import {
@@ -60,6 +62,29 @@ type DirectRecover<E> = [ReturnableBodyOf<E>] extends [never]
 /** What a handler may return: a library route error or an `Effect` failing with a response. */
 type HandlerReturn = AnyRouteError | Effect.Effect<unknown, FailureResponse>;
 
+/** A `Route.MiddlewareFunction` (or the base `MiddlewareFunction`) — `(args, next) => ...`. */
+type AnyMiddlewareFunction = (...args: never[]) => unknown;
+
+/**
+ * The `args` a `Route.MiddlewareFunction` (or the base `MiddlewareFunction`) is called
+ * with — inferred from the type argument so `makeMiddleware` can be pinned to a specific
+ * generated route's middleware type.
+ */
+type MiddlewareArgsOf<Middleware extends AnyMiddlewareFunction> = Parameters<Middleware>[0];
+
+/**
+ * The `next` a `Route.MiddlewareFunction` (or the base `MiddlewareFunction`) is called
+ * with — react-router's own `() => Promise<Result>`, not exported under its own name.
+ */
+type MiddlewareNextOf<Middleware extends AnyMiddlewareFunction> = Parameters<Middleware>[1];
+
+/**
+ * The `Result` a `Route.MiddlewareFunction` (or the base `MiddlewareFunction`) resolves
+ * with — i.e. what its `next()` resolves to, and what the middleware itself may return.
+ */
+type MiddlewareResultOf<Middleware extends AnyMiddlewareFunction> =
+  MiddlewareNextOf<Middleware> extends () => Promise<infer Result> ? Result : never;
+
 /**
  * The inferred map of handler RETURN types, keyed by domain-error tag. Making the
  * factory generic over *this* (rather than the whole handler map) is what lets
@@ -96,21 +121,32 @@ type RecoverOf<DomainError extends Tagged, Returns, E> = {
 }[keyof Returns];
 
 /**
- * Errors the library deals with on the loader's behalf — so the loader needn't
- * handle them itself:
+ * Errors the library deals with on the handler's behalf — so the loader/action/
+ * middleware needn't handle them itself:
  *  - the app's **declared domain errors** (`DomainError`) — handled by a registered
  *    handler, or left to the 500 / auto-respond default;
  *  - **library route errors** raised directly via `Respond`;
- *  - anything that renders itself via **`HttpServerRespondable`**.
+ *  - anything that renders itself via **`HttpServerRespondable`**;
+ *  - `AlsoHandled` — extra, call-site-specific already-handled errors. Only
+ *    `makeMiddleware` uses this, to admit the `FailureResponse` its `next()`
+ *    fails with (a downstream throw, already a finished response — the library
+ *    re-throws it as-is, so the middleware needn't catch it just to re-raise it).
  */
-type LibraryHandled<DomainError> = DomainError | AnyRouteError | HttpServerRespondable.Respondable;
+type LibraryHandled<DomainError, AlsoHandled = never> =
+  | DomainError
+  | AnyRouteError
+  | HttpServerRespondable.Respondable
+  | AlsoHandled;
 
 /**
- * What remains in a loader/action's error channel that the library will NOT handle
- * — i.e. service-specific errors the route consumes that aren't declared domain
- * errors. The loader/action must handle these itself (catch or map them).
+ * What remains in a handler's error channel that the library will NOT handle —
+ * i.e. service-specific errors the route consumes that aren't declared domain
+ * errors. The loader/action/middleware must handle these itself (catch or map them).
  */
-type Unhandled<E, DomainError> = Exclude<E, LibraryHandled<DomainError>>;
+type Unhandled<E, DomainError, AlsoHandled = never> = Exclude<
+  E,
+  LibraryHandled<DomainError, AlsoHandled>
+>;
 
 // ---------------------------------------------------------------------------
 // The call-site diagnostic.
@@ -137,17 +173,35 @@ type Unhandled<E, DomainError> = Exclude<E, LibraryHandled<DomainError>>;
  */
 type NameError<U> = U extends { readonly _tag: infer Tag extends string } ? Tag : U;
 
-type Diagnose<E, R, DomainError, Provided> = [Unhandled<E, DomainError>] extends [never]
-  ? [Exclude<R, Provided>] extends [never]
+/**
+ * True exactly when `T` is (or, for a union, includes) `any` — not `unknown`, not
+ * `never`, not any other type. An unrelated mistake elsewhere in the effect (a typo,
+ * a call with the wrong number of arguments, a genuine syntax error) commonly makes
+ * TypeScript infer `any` for `E`/`R` instead of reporting a clean type; running
+ * `Diagnose` on that `any` produces a confusing "unhandled errors: any" message that
+ * buries the real mistake. Guarding on this and bailing to `unknown` lets tsc's own,
+ * on-site error surface instead. (`1 & T` is `any` when `T` is `any` — including when
+ * `any` only appears as a union member, since intersection distributes over unions —
+ * and `0` is assignable to `any` but not to any concrete type built from `1 & T`.)
+ */
+type IsAny<T> = 0 extends 1 & T ? true : false;
+
+type Diagnose<E, R, DomainError, Provided, AlsoHandled = never> =
+  IsAny<E> extends true
     ? unknown
-    : {
-        "react-router-effect": "This loader/action requires a service the factory does not provide. Add it to your runtime or requestContext, or handle it in the effect.";
-        missingRequirements: Exclude<R, Provided>;
-      }
-  : {
-      "react-router-effect": "This loader/action can fail with an error the library does not handle. Catch it in the effect (e.g. Effect.catchTag), make it Respondable, or add it to your DomainError union.";
-      unhandledErrors: NameError<Unhandled<E, DomainError>>;
-    };
+    : IsAny<R> extends true
+      ? unknown
+      : [Unhandled<E, DomainError, AlsoHandled>] extends [never]
+        ? [Exclude<R, Provided>] extends [never]
+          ? unknown
+          : {
+              "react-router-effect": "This loader/action requires a service the factory does not provide. Add it to your runtime or requestContext, or handle it in the effect.";
+              missingRequirements: Exclude<R, Provided>;
+            }
+        : {
+            "react-router-effect": "This loader/action can fail with an error the library does not handle. Catch it in the effect (e.g. Effect.catchTag), make it Respondable, or add it to your DomainError union.";
+            unhandledErrors: NameError<Unhandled<E, DomainError, AlsoHandled>>;
+          };
 
 // ---------------------------------------------------------------------------
 // Internal runtime helpers.
@@ -155,6 +209,18 @@ type Diagnose<E, R, DomainError, Provided> = [Unhandled<E, DomainError>] extends
 
 const internalServerError = () =>
   Effect.fail<FailureResponse>(new Response("Internal Server Error", { status: 500 }));
+
+/**
+ * A raw `FailureResponse` — a downstream `next()`'s rejection, in `makeMiddleware` —
+ * is already a finished response; re-throwing it as-is (rather than 500ing it) lets
+ * a nested loader's redirect/thrown response pass back up through the middleware chain.
+ */
+const isFailureResponse = (e: unknown): e is FailureResponse =>
+  e instanceof Response ||
+  (typeof e === "object" &&
+    e !== null &&
+    "type" in e &&
+    (e as { type?: unknown }).type === "DataWithResponseInit");
 
 /** The internal dispatch for a library route error: recover, throw, or redirect. */
 const processRouteError = (
@@ -203,7 +269,8 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
 // ---------------------------------------------------------------------------
 
 /**
- * Build `makeLoader` / `makeAction` for an application, wired to its domain errors.
+ * Build `makeLoader` / `makeAction` / `makeMiddleware` for an application, wired to
+ * its domain errors.
  *
  * Declare the app's **domain errors** as the type argument, then register an
  * *optional* handler per domain error in `errorHandlers`. The handler keys
@@ -215,7 +282,7 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
  *
  * export const { makeLoader, makeAction, Respond } =
- *   makeLoaderOrActionFactory<DomainErrors>()((Respond) => ({
+ *   makeEffectRouteFactory<DomainErrors>()((Respond) => ({
  *     errorHandlers: {
  *       // `error` is typed as MyDomainError automatically. throw → error boundary
  *       MyDomainError: (error) => Respond.throw({ message: error.message }, 400),
@@ -245,7 +312,7 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  * services directly — no per-call `Effect.provide`:
  *
  * ```ts
- * const { makeLoader, makeAction } = makeLoaderOrActionFactory<DomainErrors>()(() => ({
+ * const { makeLoader, makeAction } = makeEffectRouteFactory<DomainErrors>()(() => ({
  *   runtime: getAppRuntime(), // provides Database, MyService, ...
  *   errorHandlers: { ... },
  * }));
@@ -258,8 +325,27 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  *   }),
  * );
  * ```
+ *
+ * `makeMiddleware` wraps a `Route.MiddlewareFunction` the same way: write it as an
+ * effect, and register the same domain errors/handlers. Pin it to the route's
+ * generated `Route.MiddlewareFunction` (a type argument, since middleware has no
+ * separate args-only type) to type `args` and `next`'s result from that route; it
+ * defaults to React Router's own `MiddlewareFunction`. The `next` handed to the
+ * effect is `() => Effect.Effect<Result, FailureResponse>` — call it with `yield*`
+ * to run the rest of the chain, and a downstream throw (e.g. a nested loader's
+ * redirect) surfaces as a typed failure instead of a rejected promise:
+ *
+ * ```ts
+ * const middleware = makeMiddleware<Route.MiddlewareFunction>((args, next) =>
+ *   Effect.gen(function* () {
+ *     const user = yield* getUser(args); // may fail with a declared domain error
+ *     if (!user) yield* Respond.redirect("/login");
+ *     return yield* next();
+ *   }),
+ * );
+ * ```
  */
-export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() {
+export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
   return function defineErrorHandlers<
     const Returns extends HandlerReturns<DomainError> = {},
     RServices = never,
@@ -322,6 +408,65 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
     const isUserError = (e: unknown): e is DomainError =>
       typeof e === "object" && e !== null && "_tag" in e && (e as Tagged)._tag in userHandlers;
 
+    /**
+     * Runs a handler's effect to completion: dispatches its whole error channel
+     * (registered domain errors, library route errors, respondables, or the 500
+     * default), provides the per-request context, and executes against the
+     * configured runtime. Shared by `makeLoader`/`makeAction` and `makeMiddleware`
+     * — they differ only in how they build the effect and what `context` they read.
+     */
+    function runProgram<E>(
+      effect: Effect.Effect<unknown, E, RServices | ReqServices>,
+      context: Readonly<RouterContextProvider>,
+    ): Promise<unknown> {
+      // The internal channel is deliberately loose (`unknown` success); the caller
+      // restores the precise resolved type (computed from `E` and the handler map).
+      // Sound at runtime — the values produced are exactly those types.
+      const program = effect.pipe(
+        // Catch the whole error channel and dispatch. The refinement is `e is E`
+        // (provably ⊆ E, and a *refinement* not a bare predicate — the predicate
+        // overload crashes tsc over a generic `E`). A declared domain error with no
+        // handler (and not respondable) falls through to the 500 default.
+        Effect.catchIf(
+          (_e): _e is E => true,
+          (e): Effect.Effect<unknown, FailureResponse> => {
+            // Registered domain error → remap. A library-error return is processed
+            // by the internal dispatch; an `Effect` return is used as-is.
+            if (isUserError(e)) {
+              const out = userHandlers[e._tag](e);
+              return isRouteError(out) ? processRouteError(out) : out;
+            }
+            // A library route error raised directly in the handler → recover/throw.
+            if (isRouteError(e)) return processRouteError(e);
+            // Respondable → render its own response and throw it.
+            if (HttpServerRespondable.isRespondable(e)) {
+              return HttpServerRespondable.toResponse(e).pipe(
+                Effect.flatMap((res) =>
+                  Effect.fail<FailureResponse>(HttpServerResponse.toWeb(res)),
+                ),
+              );
+            }
+            // Already a finished response (e.g. a downstream `next()` rejection in
+            // `makeMiddleware`) → re-throw as-is, rather than 500ing it.
+            if (isFailureResponse(e)) return Effect.fail(e);
+            return internalServerError();
+          },
+        ),
+      );
+      // Provide the per-request context (set by middleware) so `ReqServices` are
+      // satisfied, leaving only the runtime's `RServices` in the requirements.
+      // The cast is sound: `provideContext` removes `ReqServices`, and when no
+      // `requestContext` is configured `ReqServices` is `never` (nothing removed).
+      const provided = (
+        requestContextKey ? Effect.provideContext(program, context.get(requestContextKey)) : program
+      ) as Effect.Effect<unknown, FailureResponse, RServices>;
+      // Run against the configured runtime so its services satisfy the effect's
+      // `R`; with no runtime, the effect requires nothing and runs standalone.
+      return runtime
+        ? runtime.runPromise(provided)
+        : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>);
+    }
+
     function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E, R>(
       // `A`/`E`/`R` infer directly from the effect (naked, so inference stays robust).
       // The diagnostic is intersected onto the effect's return type: when the effect
@@ -338,59 +483,49 @@ export function makeLoaderOrActionFactory<DomainError extends Tagged = never>() 
       const run = fn as unknown as (
         args: Args,
       ) => Effect.Effect<unknown, E, RServices | ReqServices>;
-      return (args: Args) => {
-        // The internal channel is deliberately loose (`unknown` success); the outer
-        // cast restores the precise resolved type (computed from `E` and the handler
-        // map). Sound at runtime — the values produced are exactly those types.
-        const program = run(args).pipe(
-          // Catch the whole error channel and dispatch. The refinement is `e is E`
-          // (provably ⊆ E, and a *refinement* not a bare predicate — the predicate
-          // overload crashes tsc over a generic `E`). A declared domain error with no
-          // handler (and not respondable) falls through to the 500 default.
-          Effect.catchIf(
-            (_e): _e is E => true,
-            (e): Effect.Effect<unknown, FailureResponse> => {
-              // Registered domain error → remap. A library-error return is processed
-              // by the internal dispatch; an `Effect` return is used as-is.
-              if (isUserError(e)) {
-                const out = userHandlers[e._tag](e);
-                return isRouteError(out) ? processRouteError(out) : out;
-              }
-              // A library route error raised directly in the loader → recover/throw.
-              if (isRouteError(e)) return processRouteError(e);
-              // Respondable → render its own response and throw it.
-              if (HttpServerRespondable.isRespondable(e)) {
-                return HttpServerRespondable.toResponse(e).pipe(
-                  Effect.flatMap((res) =>
-                    Effect.fail<FailureResponse>(HttpServerResponse.toWeb(res)),
-                  ),
-                );
-              }
-              return internalServerError();
-            },
-          ),
-        );
-        // Provide the per-request context (set by middleware) so `ReqServices` are
-        // satisfied, leaving only the runtime's `RServices` in the requirements.
-        // The cast is sound: `provideContext` removes `ReqServices`, and when no
-        // `requestContext` is configured `ReqServices` is `never` (nothing removed).
-        const provided = (
-          requestContextKey
-            ? Effect.provideContext(program, args.context.get(requestContextKey))
-            : program
-        ) as Effect.Effect<unknown, FailureResponse, RServices>;
-        // Run against the configured runtime so its services satisfy the effect's
-        // `R`; with no runtime, the effect requires nothing and runs standalone.
-        const result = runtime
-          ? runtime.runPromise(provided)
-          : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>);
-        return result as Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>>;
+      return (args: Args) =>
+        runProgram(run(args), args.context) as Promise<
+          A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>
+        >;
+    }
+
+    function makeMiddleware<
+      Middleware extends MiddlewareFunction<any> = MiddlewareFunction,
+      A = MiddlewareResultOf<Middleware>,
+      E = never,
+      R = never,
+    >(
+      // Same shape as `makeLoaderOrAction`'s `fn`, but middleware also receives
+      // `next` — wrapped as an effect (rather than react-router's raw
+      // `() => Promise<Result>`) so downstream failures (e.g. a nested loader's
+      // redirect) surface as a typed `FailureResponse`, consistent with the rest
+      // of the library's error model.
+      fn: (
+        args: MiddlewareArgsOf<Middleware>,
+        next: () => Effect.Effect<MiddlewareResultOf<Middleware>, FailureResponse>,
+      ) => Effect.Effect<A, E, R> &
+        Diagnose<E, R, DomainError, RServices | ReqServices, FailureResponse>,
+    ): (
+      args: MiddlewareArgsOf<Middleware>,
+      next: MiddlewareNextOf<Middleware>,
+    ) => Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>> {
+      const run = fn as unknown as (
+        args: MiddlewareArgsOf<Middleware>,
+        next: () => Effect.Effect<MiddlewareResultOf<Middleware>, FailureResponse>,
+      ) => Effect.Effect<unknown, E, RServices | ReqServices>;
+      return (args, next) => {
+        const effectNext = () =>
+          Effect.tryPromise({ try: next, catch: (e) => e as FailureResponse });
+        return runProgram(run(args, effectNext), args.context) as Promise<
+          A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>
+        >;
       };
     }
 
     return {
       makeLoader: makeLoaderOrAction,
       makeAction: makeLoaderOrAction,
+      makeMiddleware,
       Respond,
     };
   };
