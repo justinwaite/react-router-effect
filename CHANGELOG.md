@@ -1,5 +1,32 @@
 # react-router-effect
 
+## 1.0.0
+
+### Major Changes
+
+- [#20](https://github.com/justinwaite/react-router-effect/pull/20) [`033b867`](https://github.com/justinwaite/react-router-effect/commit/033b867d7556cb79577d9725e36b3e6fe141e966) Thanks [@Mando75](https://github.com/Mando75)! - Add `makeMiddleware`, wrapping a React Router `Route.MiddlewareFunction` as an `Effect` with the same recover/throw/redirect handling as `makeLoader`/`makeAction`. Its `next` is handed to the effect as `() => Effect.Effect<Result, FailureResponse>` — call it with `yield*` to run the rest of the chain; a downstream throw (e.g. a nested loader's redirect) surfaces as a typed failure instead of a rejected promise, and is re-thrown as-is rather than becoming a 500.
+
+  **Breaking:** the factory is renamed from `makeLoaderOrActionFactory` to `makeEffectRouteFactory`, now that it also builds `makeMiddleware`. It still returns `{ makeLoader, makeAction, Respond }`, with `makeMiddleware` added.
+
+  ```ts
+  export const { makeLoader, makeAction, makeMiddleware, Respond } =
+    makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers: { ... } }));
+
+  export const middleware: Route.MiddlewareFunction[] = [
+    makeMiddleware<Route.MiddlewareFunction>(({ request }, next) =>
+      Effect.gen(function* () {
+        const user = yield* getUser(request); // may fail with a declared domain error
+        if (!user) yield* Respond.redirect("/login");
+        return yield* next();
+      }),
+    ),
+  ];
+  ```
+
+### Patch Changes
+
+- [#20](https://github.com/justinwaite/react-router-effect/pull/20) [`033b867`](https://github.com/justinwaite/react-router-effect/commit/033b867d7556cb79577d9725e36b3e6fe141e966) Thanks [@Mando75](https://github.com/Mando75)! - Fix `makeLoader`/`makeAction`/`makeMiddleware` reporting a confusing `unhandledErrors: any` (or `missingRequirements: any`) diagnostic whenever an unrelated mistake elsewhere in the effect (a typo, a call with the wrong arguments, an undefined reference) caused TypeScript to infer `any` for the error or requirement channel. The enforcement diagnostic now stands down when it detects `any` in either channel, so tsc's own error at the actual mistake is what you see instead of it being buried under ours.
+
 ## 0.6.1
 
 ### Patch Changes
