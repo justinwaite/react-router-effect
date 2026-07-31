@@ -58,7 +58,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "@vitest/browser": "4.1.10",
     "@vitest/browser-playwright": "4.1.10",
-    "effect": "4.0.0-beta.101",
+    "effect": "4.0.0-beta.102",
     "playwright": "1.60.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
