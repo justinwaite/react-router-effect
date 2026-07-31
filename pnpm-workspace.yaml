@@ -2,7 +2,7 @@ allowBuilds:
   msgpackr-extract: false
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
-  vitest: 4.1.9
+  vitest: 4.1.10
   vite-plus: latest
 overrides:
   vite: "catalog:"
