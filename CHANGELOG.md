@@ -1,5 +1,22 @@
 # react-router-effect
 
+## 1.0.1
+
+### Patch Changes
+
+- [#27](https://github.com/justinwaite/react-router-effect/pull/27) [`22f097b`](https://github.com/justinwaite/react-router-effect/commit/22f097b7fad0d677547ca1c70eaf4df895e6f6e9) Thanks [@Mando75](https://github.com/Mando75)! - Fix `makeMiddleware` rejecting handled errors when pinned to a route's middleware type.
+
+  Passing `Route.MiddlewareFunction` as a type argument makes the call fully explicit —
+  TypeScript has no partial type-argument inference — so the effect's error and requirement
+  channels defaulted to `never` and every failure was reported as unassignable, including
+  domain errors the `errorHandlers` remap and the failure `next()` itself produces. They now
+  default to what the library handles and the factory provides, so a pinned middleware admits
+  the same effects an unpinned one (or a `makeLoader`/`makeAction` call) does, and still
+  rejects unhandled errors and unprovided services.
+
+  The wrapper is also typed as the route's own middleware now — `(args, next) =>
+Promise<Result | undefined>` — so it assigns to `Route.MiddlewareFunction[]` directly.
+
 ## 1.0.0
 
 ### Major Changes
