@@ -81,9 +81,11 @@ type MiddlewareNextOf<Middleware extends AnyMiddlewareFunction> = Parameters<Mid
 /**
  * The `Result` a `Route.MiddlewareFunction` (or the base `MiddlewareFunction`) resolves
  * with — i.e. what its `next()` resolves to, and what the middleware itself may return.
+ * Read through `Awaited` because react-router declares `next` as an *interface* with a
+ * call signature (`MiddlewareNextFunction`), and a route's own may resolve synchronously.
  */
 type MiddlewareResultOf<Middleware extends AnyMiddlewareFunction> =
-  MiddlewareNextOf<Middleware> extends () => Promise<infer Result> ? Result : never;
+  MiddlewareNextOf<Middleware> extends (...args: never[]) => infer Result ? Awaited<Result> : never;
 
 /**
  * The inferred map of handler RETURN types, keyed by domain-error tag. Making the
@@ -195,11 +197,11 @@ type Diagnose<E, R, DomainError, Provided, AlsoHandled = never> =
         ? [Exclude<R, Provided>] extends [never]
           ? unknown
           : {
-              "react-router-effect": "This loader/action requires a service the factory does not provide. Add it to your runtime or requestContext, or handle it in the effect.";
+              "react-router-effect": "This loader/action/middleware requires a service the factory does not provide. Add it to your runtime or requestContext, or handle it in the effect.";
               missingRequirements: Exclude<R, Provided>;
             }
         : {
-            "react-router-effect": "This loader/action can fail with an error the library does not handle. Catch it in the effect (e.g. Effect.catchTag), make it Respondable, or add it to your DomainError union.";
+            "react-router-effect": "This loader/action/middleware can fail with an error the library does not handle. Catch it in the effect (e.g. Effect.catchTag), make it Respondable, or add it to your DomainError union.";
             unhandledErrors: NameError<Unhandled<E, DomainError, AlsoHandled>>;
           };
 
@@ -489,35 +491,64 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
         >;
     }
 
+    /**
+     * Wraps a middleware function written as an effect. Pin it to the route's generated
+     * `Route.MiddlewareFunction` (a type argument, since middleware has no separate
+     * args-only type) to type `args`, `next` and the result from that route; it defaults
+     * to React Router's own `MiddlewareFunction`.
+     *
+     * The errors the library deals with for a loader/action it deals with here too —
+     * declared domain errors, library route errors and respondables — plus the
+     * `FailureResponse` `next()` fails with. Anything else must be handled in the effect,
+     * as must any service neither the `runtime` nor the `requestContext` provides.
+     *
+     * The wrapper is typed as the route's own middleware — `(args, next) =>
+     * Promise<Result | undefined>` — so it drops straight into a
+     * `Route.MiddlewareFunction[]`. A handler that recovers (`Respond.early`) resolves
+     * with `data(...)`, which react-router's server middleware pipeline turns into the
+     * short-circuit `Response`.
+     */
     function makeMiddleware<
-      Middleware extends MiddlewareFunction<any> = MiddlewareFunction,
-      A = MiddlewareResultOf<Middleware>,
-      E = never,
-      R = never,
+      Middleware extends AnyMiddlewareFunction = MiddlewareFunction,
+      // A pinned call passes an explicit type argument, which makes the whole call
+      // explicit — TypeScript has no partial inference — so these defaults stand in
+      // for what would otherwise be inferred: exactly the errors the library handles
+      // and the services the factory provides.
+      E = LibraryHandled<DomainError, FailureResponse>,
+      R = RServices | ReqServices,
     >(
       // Same shape as `makeLoaderOrAction`'s `fn`, but middleware also receives
       // `next` — wrapped as an effect (rather than react-router's raw
       // `() => Promise<Result>`) so downstream failures (e.g. a nested loader's
       // redirect) surface as a typed `FailureResponse`, consistent with the rest
-      // of the library's error model.
+      // of the library's error model. The success type is fixed to the route's own
+      // `Result` (plus `void`), which is what react-router accepts back.
       fn: (
         args: MiddlewareArgsOf<Middleware>,
         next: () => Effect.Effect<MiddlewareResultOf<Middleware>, FailureResponse>,
-      ) => Effect.Effect<A, E, R> &
+      ) => Effect.Effect<MiddlewareResultOf<Middleware> | void, E, R> &
         Diagnose<E, R, DomainError, RServices | ReqServices, FailureResponse>,
     ): (
       args: MiddlewareArgsOf<Middleware>,
       next: MiddlewareNextOf<Middleware>,
-    ) => Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>> {
+    ) => Promise<MiddlewareResultOf<Middleware> | undefined> {
+      // Inside the body the route's own arg/result types are opaque (they're
+      // `Parameters<Middleware>[...]` of an unresolved type parameter), so dispatch
+      // through the loose shape — as `makeLoaderOrAction` does with its diagnostic.
+      // Sound at runtime: the values produced are exactly the declared types.
       const run = fn as unknown as (
         args: MiddlewareArgsOf<Middleware>,
-        next: () => Effect.Effect<MiddlewareResultOf<Middleware>, FailureResponse>,
+        next: () => Effect.Effect<unknown, FailureResponse>,
       ) => Effect.Effect<unknown, E, RServices | ReqServices>;
       return (args, next) => {
         const effectNext = () =>
-          Effect.tryPromise({ try: next, catch: (e) => e as FailureResponse });
-        return runProgram(run(args, effectNext), args.context) as Promise<
-          A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>
+          Effect.tryPromise({
+            try: next as unknown as () => Promise<unknown>,
+            catch: (e) => e as FailureResponse,
+          });
+        const { context } = args as unknown as { context: Readonly<RouterContextProvider> };
+        return runProgram(run(args, effectNext), context) as Promise<
+          MiddlewareResultOf<Middleware> | undefined
         >;
       };
     }

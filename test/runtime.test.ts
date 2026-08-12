@@ -1,6 +1,6 @@
 import { Data, Effect } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
-import type { LoaderFunctionArgs } from "react-router";
+import type { LoaderFunctionArgs, MiddlewareFunction } from "react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
@@ -317,6 +317,27 @@ describe("makeMiddleware", () => {
     expect(res).toBeInstanceOf(Response);
     expect((res as Response).status).toBe(302);
     expect((res as Response).headers.get("location")).toBe("/login");
+  });
+
+  it("behaves the same when pinned to a route's middleware type", async () => {
+    // Pinning the middleware type switches the call to explicit type arguments;
+    // the error channel must still be dispatched exactly as when it's inferred.
+    const factory = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+      errorHandlers: {
+        FormError: (error: FormError) => Respond.early({ reply: error.reply }),
+      },
+    }));
+    const middleware = factory.makeMiddleware<MiddlewareFunction<Response>>((_args, next) =>
+      Effect.gen(function* () {
+        yield* new FormError({ reply: "blocked" });
+        return yield* next();
+      }),
+    );
+    const next = async () => new Response("downstream");
+    await expect(middleware(args, next)).resolves.toMatchObject({
+      type: "DataWithResponseInit",
+      data: { reply: "blocked" },
+    });
   });
 
   it("surfaces a downstream next() rejection as a typed FailureResponse", async () => {
