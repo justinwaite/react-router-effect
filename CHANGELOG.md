@@ -1,5 +1,11 @@
 # react-router-effect
 
+## 1.0.2
+
+### Patch Changes
+
+- [#29](https://github.com/justinwaite/react-router-effect/pull/29) [`310c105`](https://github.com/justinwaite/react-router-effect/commit/310c105b8bac4965e7ccbec8c3226424a2bcc70f) Thanks [@Mando75](https://github.com/Mando75)! - update effect version
+
 ## 1.0.1
 
 ### Patch Changes
