@@ -19,7 +19,7 @@ const requestContext: RequestContextKey<RequestContext> = createContext();
 function argsForRequest(userId: string): LoaderFunctionArgs {
   const context = new RouterContextProvider();
   context.set(requestContext, Context.make(RequestContext, { userId }));
-  return { context } as unknown as LoaderFunctionArgs;
+  return { context, request: new Request("http://localhost/") } as unknown as LoaderFunctionArgs;
 }
 
 describe("request context (no runtime)", () => {
