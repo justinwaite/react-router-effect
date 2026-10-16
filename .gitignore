@@ -4,5 +4,5 @@ dist
 .DS_Store
 
 # Vitest browser-mode debug artifacts (written only on failure)
-.vitest-attachments/
+.vitest/attachments/
 **/__screenshots__/

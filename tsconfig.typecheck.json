@@ -1,7 +1,7 @@
 {
   // Scopes Vitest's `tsc`-based type testing to the library and the `*.test-d.ts`
   // return-type assertions. The browser `*.spec.tsx` files are excluded: they
-  // import browser-only specifiers (`vitest`, `@vitest/browser/context`) that the
+  // import browser-only specifiers (`vitest`, `vitest/browser`) that the
   // standalone `tsc` program can't resolve, and they're already type-checked by
   // `vp check` and run for real in the browser project.
   "extends": "./tsconfig.json",
