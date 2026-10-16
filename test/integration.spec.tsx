@@ -14,7 +14,7 @@ import {
   useRouteError,
   type LoaderFunctionArgs,
 } from "react-router";
-import { page, userEvent } from "@vitest/browser/context";
+import { page, userEvent } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
@@ -147,7 +147,7 @@ describe("makeLoader — through a real router", () => {
     await renderRoute({ Component: ShowLoaderData, ErrorBoundary: Boundary, loader });
 
     await expect.element(page.getByTestId("status")).toHaveTextContent("400");
-    await expect.element(page.getByTestId("error-data")).toHaveTextContent("bad input");
+    await expect.element(page.getByTestId("error-data")).toHaveTextContent('"bad input"');
   });
 
   it("auto-renders an unregistered HttpServerRespondable error", async () => {
@@ -221,6 +221,6 @@ describe("makeAction — through a real router", () => {
     await userEvent.click(page.getByRole("button", { name: "Submit" }));
 
     await expect.element(page.getByTestId("status")).toHaveTextContent("400");
-    await expect.element(page.getByTestId("error-data")).toHaveTextContent("invalid form");
+    await expect.element(page.getByTestId("error-data")).toHaveTextContent('"invalid form"');
   });
 });
