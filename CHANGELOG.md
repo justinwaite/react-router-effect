@@ -1,5 +1,11 @@
 # react-router-effect
 
+## 1.0.3
+
+### Patch Changes
+
+- [#51](https://github.com/justinwaite/react-router-effect/pull/51) [`6690bb5`](https://github.com/justinwaite/react-router-effect/commit/6690bb55d617e31f35b56b05adcf78f048dd2e27) Thanks [@Mando75](https://github.com/Mando75)! - When a request aborts, the library now interrupts the loader, action, and middleware effects.
+
 ## 1.0.2
 
 ### Patch Changes
