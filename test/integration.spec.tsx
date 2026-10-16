@@ -5,7 +5,7 @@
  * auto-respond / 500 lifecycle works through the framework, not just in types.
  */
 import { Data, Effect } from "effect";
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import {
   Form,
   isRouteErrorResponse,
