@@ -39,7 +39,7 @@ export default defineConfig({
             "react/jsx-dev-runtime",
             "react-router",
             "effect",
-            "effect/unstable/http",
+            "effect/http",
           ],
         },
         test: {
