@@ -46,7 +46,7 @@ const runtime = ManagedRuntime.make(AppLayer);
 
 afterAll(() => runtime.dispose());
 
-const args = {} as LoaderFunctionArgs;
+const args = { request: new Request("http://localhost/") } as LoaderFunctionArgs;
 
 async function settle<T>(promise: Promise<T>) {
   try {

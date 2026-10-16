@@ -420,6 +420,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
     function runProgram<E>(
       effect: Effect.Effect<unknown, E, RServices | ReqServices>,
       context: Readonly<RouterContextProvider>,
+      signal: AbortSignal,
     ): Promise<unknown> {
       // The internal channel is deliberately loose (`unknown` success); the caller
       // restores the precise resolved type (computed from `E` and the handler map).
@@ -464,9 +465,12 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       ) as Effect.Effect<unknown, FailureResponse, RServices>;
       // Run against the configured runtime so its services satisfy the effect's
       // `R`; with no runtime, the effect requires nothing and runs standalone.
+      // The request's abort signal interrupts the fiber, so finalizers run and
+      // in-flight work is cancelled. React Router races the handler against the same
+      // signal and discards its result, so the interrupt rejection is never rendered.
       return runtime
-        ? runtime.runPromise(provided)
-        : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>);
+        ? runtime.runPromise(provided, { signal })
+        : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>, { signal });
     }
 
     function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E, R>(
@@ -486,7 +490,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
         args: Args,
       ) => Effect.Effect<unknown, E, RServices | ReqServices>;
       return (args: Args) =>
-        runProgram(run(args), args.context) as Promise<
+        runProgram(run(args), args.context, args.request.signal) as Promise<
           A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>
         >;
     }
@@ -546,8 +550,11 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
             try: next as unknown as () => Promise<unknown>,
             catch: (e) => e as FailureResponse,
           });
-        const { context } = args as unknown as { context: Readonly<RouterContextProvider> };
-        return runProgram(run(args, effectNext), context) as Promise<
+        const { context, request } = args as unknown as {
+          context: Readonly<RouterContextProvider>;
+          request: Request;
+        };
+        return runProgram(run(args, effectNext), context, request.signal) as Promise<
           MiddlewareResultOf<Middleware> | undefined
         >;
       };

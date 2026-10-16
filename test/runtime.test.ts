@@ -54,7 +54,7 @@ const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>
   },
 }));
 
-const args = {} as LoaderFunctionArgs;
+const args = { request: new Request("http://localhost/") } as LoaderFunctionArgs;
 
 /** Run a route handler and report whether it resolved or rejected, with the value. */
 async function settle<T>(promise: Promise<T>) {
@@ -71,6 +71,32 @@ const isData = (v: unknown): v is { type: string; data: unknown; init?: number |
 // ---------------------------------------------------------------------------
 // Tests.
 // ---------------------------------------------------------------------------
+
+describe("request abort signal", () => {
+  it("interrupts the loader effect and runs its finalizers when the request aborts", async () => {
+    const controller = new AbortController();
+    const abortArgs = {
+      request: new Request("http://localhost/", { signal: controller.signal }),
+    } as LoaderFunctionArgs;
+    let finalized = false;
+    const loader = makeLoader((_a: LoaderFunctionArgs) =>
+      Effect.never.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalized = true;
+          }),
+        ),
+      ),
+    );
+
+    const pending = settle(loader(abortArgs));
+    controller.abort();
+
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(finalized).toBe(true);
+  });
+});
 
 describe("makeLoader — success & direct route errors", () => {
   it("resolves with the effect's success value", async () => {

@@ -47,7 +47,13 @@ export default defineConfig({
           include: ["test/**/*.spec.tsx"],
           browser: {
             enabled: true,
-            provider: playwright(),
+            // Set `CHROMIUM_PATH` (e.g. `/usr/bin/chromium`) to use a system Chromium
+            // where `playwright install` is unsupported, such as Arch Linux.
+            provider: playwright({
+              launchOptions: process.env.CHROMIUM_PATH
+                ? { executablePath: process.env.CHROMIUM_PATH }
+                : undefined,
+            }),
             headless: true,
             instances: [{ browser: "chromium" }],
           },
