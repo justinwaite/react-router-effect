@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import type {
   MiddlewareFunction,
   RouterContextProvider,
