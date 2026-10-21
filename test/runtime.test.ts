@@ -1,5 +1,5 @@
 import { Data, Effect } from "effect";
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import type { LoaderFunctionArgs, MiddlewareFunction } from "react-router";
 import { describe, expect, it } from "vite-plus/test";
 

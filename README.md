@@ -27,7 +27,7 @@ const loader = makeLoader((args: Route.LoaderArgs) =>
 vp add react-router-effect effect react-router
 ```
 
-`effect` and `react-router` are peer dependencies.
+`effect` and `react-router` are peer dependencies. The library requires Effect 4 (`effect@^4.0.0`).
 
 ## Concepts
 
@@ -166,7 +166,7 @@ If a domain error implements `HttpServerRespondable`, you don't need to register
 it renders its own response:
 
 ```ts
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 
 class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   [HttpServerRespondable.symbol]() {

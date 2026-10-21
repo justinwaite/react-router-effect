@@ -1,5 +1,5 @@
 import { type Context, Effect, type ManagedRuntime } from "effect";
-import { HttpServerRespondable, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import {
   data,
   redirect,
