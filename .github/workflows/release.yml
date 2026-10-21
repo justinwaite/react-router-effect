@@ -23,8 +23,8 @@ jobs:
     steps:
       # Mint a short-lived token for the release GitHub App. Using an App token
       # (instead of the default GITHUB_TOKEN) means the "Version Packages" PR and
-      # its commits trigger CI, and — paired with commitMode below — the version
-      # commit is attributed to the App.
+      # its commits trigger CI, and — because the action pushes through the GitHub
+      # API — the version commit is attributed to the App.
       - name: Generate release app token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -51,16 +51,16 @@ jobs:
 
       - name: Create release PR or publish
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        # v2 pushes the version commit and tags through the GitHub API by default,
+        # so they're signed with GitHub's GPG key (verified). Required because the
+        # repo's ruleset enforces signed commits. The action passes `github-token`
+        # to both scripts as GITHUB_TOKEN (for @changesets/changelog-github) and
+        # sets CHANGESETS_OUTPUT, which `vp run` forwards to `changeset publish`.
+        #
+        # No npm token: auth is via OIDC Trusted Publishing (configured on the
+        # npm package settings for this repo + workflow). Provenance is
+        # attached automatically under trusted publishing.
         with:
-          version: vp run changeset:version
-          publish: vp run changeset:release
-          # Create the version commit and tags through the GitHub API so they're
-          # signed with GitHub's GPG key (verified). Required because the repo's
-          # ruleset enforces signed commits — a plain git push would be unsigned
-          # and the Version Packages PR couldn't be merged.
-          commitMode: github-api
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          # No npm token: auth is via OIDC Trusted Publishing (configured on the
-          # npm package settings for this repo + workflow). Provenance is
-          # attached automatically under trusted publishing.
+          github-token: ${{ steps.app-token.outputs.token }}
+          version-script: vp run changeset:version
+          publish-script: vp run changeset:release
