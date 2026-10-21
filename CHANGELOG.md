@@ -1,5 +1,15 @@
 # react-router-effect
 
+## 2.0.0
+
+### Major Changes
+
+- [#55](https://github.com/justinwaite/react-router-effect/pull/55) [`d32de9c`](https://github.com/justinwaite/react-router-effect/commit/d32de9c561752bd0456d3dff13d329f5efda21ee) Thanks [@justinwaite](https://github.com/justinwaite)! - The library now targets the stable Effect 4 release. The `effect` peer dependency range changes from `^4.0.0-beta.107` to `^4.0.0`. The library imports the HTTP modules from `effect/http` instead of `effect/unstable/http`, and the Effect 4.0.0 beta releases do not have that path. If you use an Effect 4.0.0 beta, upgrade to `effect@^4.0.0` before you upgrade this package. In your own code, change `effect/unstable/http` imports to `effect/http`.
+
+### Patch Changes
+
+- [#51](https://github.com/justinwaite/react-router-effect/pull/51) [`6690bb5`](https://github.com/justinwaite/react-router-effect/commit/6690bb55d617e31f35b56b05adcf78f048dd2e27) Thanks [@Mando75](https://github.com/Mando75)! - When a request aborts, the library now interrupts the loader, action, and middleware effects.
+
 ## 1.0.2
 
 ### Patch Changes
