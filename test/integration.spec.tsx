@@ -1,7 +1,7 @@
 /**
  * End-to-end browser integration tests. Each test builds a loader/action with
- * `makeLoader` / `makeAction`, mounts it in a real React Router runtime, and
- * asserts the rendered outcome — proving the whole recover / throw / redirect /
+ * `makeLoader` / `makeAction`, mounts it in the actual React Router runtime, and
+ * asserts the rendered outcome - proving the recover / throw / redirect /
  * auto-respond / 500 lifecycle works through the framework, not just in types.
  */
 import { Data, Effect } from "effect";
@@ -26,10 +26,10 @@ import { renderRoute } from "./app/render-route.tsx";
 
 class FormError extends Data.TaggedError("FormError")<{ readonly reply: string }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ readonly message: string }> {}
-/** A declared domain error with no handler — falls through to the 500 default. */
+/** A declared domain error with no handler - falls through to the 500 default. */
 class UnhandledDomainError extends Data.TaggedError("UnhandledDomainError")<{}> {}
 
-/** Self-rendering domain error — handled via `HttpServerRespondable`, no handler. */
+/** Self-rendering domain error - handled via `HttpServerRespondable`, no handler. */
 class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   [HttpServerRespondable.symbol](): Effect.Effect<HttpServerResponse.HttpServerResponse> {
     return HttpServerResponse.json({ error: "Not authorized" }, { status: 403 }).pipe(Effect.orDie);

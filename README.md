@@ -1,169 +1,215 @@
 # react-router-effect
 
-Wrap [React Router](https://reactrouter.com) framework-mode loaders, actions, and middleware with
-[Effect](https://effect.website), and get **typed, declarative error handling** for free.
+Serve a [React Router](https://reactrouter.com) framework-mode app from [Effect](https://effect.website)'s
+Node HTTP server, and write its loaders, actions and middleware as Effects.
 
-Write your loader/action/middleware as an `Effect`. When it short-circuits with a tagged error,
-the library decides — based on handlers you register once — whether to **recover** (return data
-the component reads via `useLoaderData`) or **throw** (send it to the error boundary or issue
-a redirect). The resolved type of every loader/action reflects exactly what it can return.
+A route function that returns an `Effect` runs with your app's services. When it fails with a tagged
+error, the route factory you configure once decides what happens: recover with data for
+`useLoaderData`, send the error to the error boundary, or redirect. The type of the route's data
+lists what the route can return.
 
 ```ts
-const loader = makeLoader((args: Route.LoaderArgs) =>
-  Effect.gen(function* () {
-    const user = yield* getUser(args); // may fail with your domain errors
-    if (!user.onboarded) {
-      yield* Respond.redirect("/onboarding"); // throw → redirect
-    }
-    return { user };
-  }),
-);
-// loader: (args) => Promise<{ user: User } /* | recovered shapes */>
+export const loader = Effect.fn("loader.profile")(function* ({
+  params,
+}: EffectRouteArgs<Route.LoaderArgs>) {
+  const profile = yield* (yield* Profiles).get(params.id); // fails with your domain errors
+  if (!profile.public) yield* Respond.early({ restricted: true }); // recover with typed data
+  return { profile };
+});
+// Route.ComponentProps["loaderData"]: { profile: Profile } | { restricted: boolean }
 ```
+
+If your app does not serve React Router from an Effect HTTP server, read
+[Without the Effect HTTP server](#without-the-effect-http-server).
 
 ## Install
 
 ```bash
-vp add react-router-effect effect react-router
+vp add react-router-effect effect @effect/platform-node
 ```
 
-`effect` and `react-router` are peer dependencies. The library requires Effect 4 (`effect@^4.0.0`).
+`effect`, `@effect/platform-node`, `react-router` and `@react-router/node` are peer dependencies.
+The library requires Effect 4.1 (`effect@^4.1.0`). The server adapter runs on Effect's Node HTTP
+server and reads request bodies with `@react-router/node`.
 
-## Concepts
+A React Router framework app on Node already has `react-router` and `@react-router/node` in its
+`dependencies`. React Router's templates list both, and its default Node server entry imports from
+`@react-router/node` at runtime. They are not additional dependencies. If your app gets
+`@react-router/node` only through `@react-router/dev`, a dev dependency, add it to `dependencies` at
+your `react-router` version.
 
-A loader/action effect can short-circuit in three ways, via the `Respond` helpers:
+## Get started
 
-| Helper                         | Outcome     | Where it lands                                      |
-| ------------------------------ | ----------- | --------------------------------------------------- |
-| `Respond.early(value, init?)`  | **recover** | resolves with `data(value, init)` → `useLoaderData` |
-| `Respond.throw(value, init?)`  | **throw**   | rejects with `data(value, init)` → error boundary   |
-| `Respond.redirect(url, init?)` | **throw**   | rejects with a redirect `Response`                  |
+[`examples/basic`](examples/basic) is an app with these files. It also has development with
+Vite, tests against the production build, and benchmarks.
 
-You declare your app's **domain errors** as a type argument to the factory, and may register a
-handler per domain error. A handler _remaps_ an error by returning either:
+### 1. Create the route factory
 
-- a library route error — `Respond.early(...)` / `Respond.throw(...)` / `Respond.redirect(...)`; or
-- an `Effect` — `Effect.succeed(value)` to **recover** with `value`, or `Effect.fail(response)`
-  to **throw** a `Response` / `DataWithResponseInit`.
-
-A **declared domain error** may be left unhandled:
-
-- if it implements [`HttpServerRespondable`](https://effect.website) it's rendered automatically
-  from its own response;
-- otherwise it falls through to a **500**.
-
-**Any other error** a route consumes — a service-specific error that isn't a declared domain
-error — **must be handled** in the loader/action (caught or mapped), or `makeLoader`/`makeAction`
-fails to type-check with a message naming the unhandled error(s). This gives app-wide defaults for
-declared errors while enforcing explicit handling of feature/service-specific ones. (Likewise, an
-effect that requires a service neither the `runtime` nor the `requestContext` provides fails to
-type-check with a message naming the missing service.)
-
-## Usage
-
-### 1. Configure the factory once
+The route factory has what every route Effect needs: the runtime that provides your services, and
+the handlers for your domain errors.
 
 ```ts
-// app/route.server.ts
-import { Data, Effect } from "effect";
+// app/lib/route-factory.server.ts
+import { ManagedRuntime } from "effect";
 import { makeEffectRouteFactory } from "react-router-effect";
+
+import { InvalidTodo, Todos } from "./services.server";
+
+export const runtime = ManagedRuntime.make(Todos.layer);
+
+// Pin the domain errors, then the handler types are inferred.
+export const routeFactory = makeEffectRouteFactory<InvalidTodo>()((Respond) => ({
+  runtime,
+  errorHandlers: {
+    // A form error goes back to the form as data, with a 422.
+    InvalidTodo: (error) => Respond.early({ error: error.message }, 422),
+  },
+}));
+
+// Routes import this `Respond`. No library export has the same name.
+export const { Respond } = routeFactory;
+```
+
+### 2. Create the server app
+
+`ReactRouterHttp.make` returns an Effect HTTP app. It runs React Router with your route factory.
+
+```ts
+// server/app.ts
+import { ReactRouterHttp } from "react-router-effect/server";
+
+import { routeFactory } from "../app/lib/route-factory.server";
+
+export const reactRouterApp = ReactRouterHttp.make({
+  build: () => import("virtual:react-router/server-build"),
+  factory: routeFactory,
+  clientAssets: true, // serves build/client in production
+});
+```
+
+### 3. Serve it
+
+The app serves `reactRouterApp` with its own Effect HTTP server and its own middleware.
+
+```ts
+// server/main.ts
+import { createServer } from "node:http";
+
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import { Layer } from "effect";
+import { HttpMiddleware, HttpServer } from "effect/http";
+
+import { reactRouterApp } from "./app";
+
+HttpServer.serve(reactRouterApp, HttpMiddleware.logger).pipe(
+  Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
+  Layer.launch,
+  NodeRuntime.runMain,
+);
+```
+
+### 4. Build the server
+
+Make `server/main.ts` the entry of the server build. The build then contains your server, and
+`react-router build` writes it to `build/server/index.js`.
+
+```ts
+// vite.config.ts
+import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [reactRouter()],
+  environments: { ssr: { build: { rollupOptions: { input: "./server/main.ts" } } } },
+});
+```
+
+```bash
+react-router build
+NODE_ENV=production node build/server/index.js
+```
+
+For development, read [Development with Vite](#development-with-vite).
+
+### 5. Write routes as Effects
+
+A loader, action or middleware is an `Effect.fn`. It needs no wrapper. The adapter runs it with the
+factory's runtime and error handlers.
+
+```ts
+// app/routes/todos.tsx
+import { Effect } from "effect";
+import { data } from "react-router";
+import type { EffectRouteArgs } from "react-router-effect";
+
+import type { Route } from "./+types/todos";
+
+import { Todos } from "../lib/services.server";
+
+export const loader = Effect.fn("loader.todos")(function* () {
+  return { todos: yield* (yield* Todos).list };
+});
+
+// `InvalidTodo` is not handled here. The route factory turns it into `{ error }` data with a 422.
+export const action = Effect.fn("action.todos")(function* ({
+  request,
+}: EffectRouteArgs<Route.ActionArgs>) {
+  const form = yield* Effect.promise(() => request.formData());
+  const todo = yield* (yield* Todos).add(String(form.get("title")));
+  return data({ todo }, { status: 201 });
+});
+```
+
+`EffectRouteArgs` keeps hooks that take `typeof action` or `typeof loader` typed, such as
+`useFetcher<typeof action>()`. [Plain Effect loaders, actions and
+middleware](#plain-effect-loaders-actions-and-middleware) explains why. A route function that does
+not return an Effect passes through to React Router unchanged, so promise loaders keep working in
+the same app.
+
+## Handle errors
+
+An Effect can short-circuit in three ways, with the `Respond` helpers:
+
+| Helper                         | Outcome | Where it lands                                      |
+| ------------------------------ | ------- | --------------------------------------------------- |
+| `Respond.early(value, init?)`  | recover | resolves with `data(value, init)` → `useLoaderData` |
+| `Respond.throw(value, init?)`  | throw   | rejects with `data(value, init)` → error boundary   |
+| `Respond.redirect(url, init?)` | throw   | rejects with a redirect `Response`                  |
+
+Declare your app's domain errors as the type argument of `makeEffectRouteFactory`. You can register
+one handler for each. A handler remaps its error. It returns one of these:
+
+- A library route error: `Respond.early(...)`, `Respond.throw(...)` or `Respond.redirect(...)`.
+- An `Effect`: `Effect.succeed(value)` recovers with `value`, and `Effect.fail(response)` throws a
+  `Response` or `DataWithResponseInit`.
+
+```ts
+import { Data, Effect } from "effect";
 
 class FormError extends Data.TaggedError("FormError")<{ reply: SubmissionResponse }> {}
 class BadInputError extends Data.TaggedError("BadInputError")<{ message: string }> {}
 class DbError extends Data.TaggedError("DbError")<{ query: string }> {}
 
-// Declare every error your app handles app-wide. `DbError` has no handler below,
-// so it falls through to the 500 default.
+// `DbError` has no handler below, so it falls through to the 500 default.
 type DomainErrors = FormError | BadInputError | DbError;
 
-// Curried: pin the domain errors, then the handler types are inferred. The config
-// is a *builder* — it receives `Respond` (the library's `early`/`throw`/`redirect`)
-// so your handlers can recover/throw, and the factory hands back a single `Respond`
-// for your routes to import (no auto-import ambiguity with a library export).
-export const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()(
-  (Respond) => ({
-    // App-specific helpers — merged onto the returned `Respond` (base helpers win):
-    respond: {
-      formError: (reply: SubmissionResponse) => new FormError({ reply }),
-    },
-    errorHandlers: {
-      // keys autocomplete to your domain-error tags; `error` is typed from its key.
-      // recover: short-circuit and hand the reply to the component
-      FormError: (error) => Respond.early({ reply: error.reply }),
-      // throw: send to the error boundary
-      BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
-    },
-  }),
-);
+export const routeFactory = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+  // App-specific helpers. The returned `Respond` has them next to the base helpers.
+  respond: {
+    formError: (reply: SubmissionResponse) => new FormError({ reply }),
+  },
+  errorHandlers: {
+    // Keys autocomplete to your domain-error tags, and `error` is typed from its key.
+    // Recover: pass the reply to the component.
+    FormError: (error) => Respond.early({ reply: error.reply }),
+    // Throw: send to the error boundary.
+    BadInputError: (error) => Effect.fail(new Response(error.message, { status: 400 })),
+  },
+}));
 ```
 
-> **One `Respond`, no annotations.** Your routes import the `Respond` returned here — there's
-> no library-level `Respond` to clash with it on auto-import. Handler keys autocomplete to your
-> declared domain-error tags, each `error` parameter is typed from its key, and the precise
-> recover types are derived from each handler's return.
-
-### 2. Write loaders/actions as effects
-
-```ts
-// app/routes/profile.ts
-import { Effect } from "effect";
-import { makeLoader, Respond } from "../route.server.ts";
-import type { Route } from "./+types/profile";
-
-const loaderEffect = ({ params }: Route.LoaderArgs) =>
-  Effect.gen(function* () {
-    const profile = yield* getProfile(params.id); // may fail with FormError / BadInputError
-    if (!profile.public) {
-      yield* Respond.early({ restricted: true }); // recover with typed data
-    }
-    return { profile };
-  });
-
-export const loader = makeLoader((args: Route.LoaderArgs) => loaderEffect(args));
-```
-
-The resolved type is computed from the effect and your handlers:
-
-```ts
-type LoaderData = Route.ComponentProps["loaderData"];
-// { profile: Profile } | DataWithResponseInit<{ restricted: boolean }>
-//   ( BadInputError throws, so it never appears here )
-```
-
-### 3. Write middleware as effects
-
-`makeMiddleware` wraps a [middleware](https://reactrouter.com/how-to/middleware) function the
-same way, wired to the same `errorHandlers`. Pin it to the route's generated
-`Route.MiddlewareFunction` — middleware has no separate args-only type, so the whole function
-type is the type argument — or omit it to default to React Router's own `MiddlewareFunction`:
-
-```ts
-// app/routes/profile.ts
-import { Effect } from "effect";
-import { makeMiddleware, Respond } from "../route.server.ts";
-import type { Route } from "./+types/profile";
-
-export const middleware: Route.MiddlewareFunction[] = [
-  makeMiddleware<Route.MiddlewareFunction>(({ request }, next) =>
-    Effect.gen(function* () {
-      const user = yield* getUser(request); // may fail with FormError / BadInputError
-      if (!user) yield* Respond.redirect("/login"); // throw → redirect, same as a loader
-      return yield* next(); // run the rest of the chain
-    }),
-  ),
-];
-```
-
-`next` is handed to the effect as `() => Effect.Effect<Result, FailureResponse>` (React Router's
-own `next: () => Promise<Result>`, wrapped) — call it with `yield*` to run downstream
-loaders/middleware. A downstream throw (e.g. a nested loader's redirect) surfaces as a typed
-failure rather than a rejected promise, so it flows through the same recover/throw handling as
-a loader or action.
-
-### Self-rendering domain errors
-
-If a domain error implements `HttpServerRespondable`, you don't need to register a handler —
-it renders its own response:
+A declared domain error can have no handler. If it implements `HttpServerRespondable`, it renders
+its own response. A registered handler still takes precedence. Otherwise it falls through to a 500.
 
 ```ts
 import { HttpServerRespondable, HttpServerResponse } from "effect/http";
@@ -175,51 +221,359 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
 }
 ```
 
-A registered handler, if present, still takes precedence over the error's own response.
+Any other error that a route consumes must be handled in the route. This includes a
+service-specific error that is not a declared domain error. Catch it or map it. This gives the app
+defaults for declared errors. The errors of one feature or service need explicit handling.
+[The route check](#the-route-check) reports an unhandled error at compile time.
 
-### Providing services with a runtime
+## Provide services
 
-Pass a `runtime` (an effect [`ManagedRuntime`](https://effect.website)) and your loaders/actions
-may require its services directly — no per-call `Effect.provide`. The runtime is built once and
-reused for every request:
+### App-wide services with a runtime
+
+The `runtime` is an Effect [`ManagedRuntime`](https://effect.website). The factory builds it once and
+reuses it for every request. Route Effects require its services directly, with no `Effect.provide`
+in the route. The runtime's services are the allowed requirements of a route Effect. A route that
+requires another service is a compile error. Without a `runtime`, a route Effect must require
+nothing.
 
 ```ts
-// app/runtime.server.ts
-import { ManagedRuntime } from "effect";
-export const appRuntime = ManagedRuntime.make(AppLayer); // provides Database, MyService, ...
-
-// app/route.server.ts
-export const { makeLoader, makeAction } = makeEffectRouteFactory<DomainErrors>()(() => ({
-  runtime: appRuntime,
-  errorHandlers: { ... },
-}));
-
-// app/routes/profile.ts — `MyService` is satisfied by the runtime, not provided here:
-const loader = makeLoader((args: Route.LoaderArgs) =>
-  Effect.gen(function* () {
-    const svc = yield* MyService;
-    return { profile: yield* svc.load(args.params.id) };
-  }),
-);
+export const loader = Effect.fn("loader.profile")(function* ({
+  params,
+}: EffectRouteArgs<Route.LoaderArgs>) {
+  const svc = yield* MyService; // the runtime provides MyService
+  return { profile: yield* svc.load(params.id) };
+});
 ```
 
-The runtime's services become the effect's allowed requirement channel: requiring a service the
-runtime provides type-checks, while requiring one it _doesn't_ is a compile error. With no
-`runtime`, effects must require nothing.
-
-`errorHandlers` is optional too — configure a factory with just a runtime, or with nothing:
+`errorHandlers` is optional. A factory can have a runtime only, or nothing:
 
 ```ts
 makeEffectRouteFactory()(() => ({ runtime }));
 makeEffectRouteFactory()(() => ({}));
 ```
 
-### Per-request services from middleware
+### Per-request services
 
-The runtime provides app-wide services. For **request-scoped** services — the current user, a
-request id, a per-request transaction — use [middleware](https://reactrouter.com/how-to/middleware).
-Middleware sets a fresh effect `Context` on a React Router context key each request; the factory's
-`requestContext` reads it and provides those services to the loader/action:
+The runtime provides app-wide services. A request-scoped service is the current user, a request id,
+or a transaction for one request. There are two ways to provide one.
+
+The adapter option `requestContext` builds the services before React Router runs. Every middleware,
+loader and action sees them, and no middleware has to set them:
+
+```ts
+ReactRouterHttp.make({
+  build: () => import("virtual:react-router/server-build"),
+  factory: routeFactory,
+  requestContext: (request) =>
+    Context.make(RequestInfo, {
+      id: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+      startedAt: Date.now(),
+    }),
+});
+```
+
+A [middleware](https://reactrouter.com/how-to/middleware) can also provide services. An effect
+middleware provides them around `next()`, and everything downstream of `next()` can require them:
+
+```ts
+// app/root.tsx
+export const middleware = [
+  Effect.fn("middleware.visitor")(function* ({
+    request,
+    next,
+  }: EffectMiddlewareArgs<Route.MiddlewareFunction>) {
+    const name = yield* readVisitor(request);
+    return yield* next().pipe(
+      Effect.provideService(Visitor, { name }),
+      Effect.annotateLogs({ visitor: name }),
+    );
+  }),
+];
+```
+
+Tell the factory which services the request provides with a context key:
+
+```ts
+// app/lib/route-factory.server.ts
+import { createContext } from "react-router";
+import type { RequestContextKey } from "react-router-effect";
+
+export const requestContext: RequestContextKey<RequestInfo | Visitor> = createContext();
+
+export const routeFactory = makeEffectRouteFactory<DomainErrors>()(() => ({
+  runtime,
+  requestContext,
+}));
+```
+
+A route Effect can then require the runtime's services and the request's services. Any other
+requirement is a compile error. `RequestContextKey<ReqServices>` is an alias of
+`RouterContext<Context.Context<ReqServices>>`.
+
+## The adapter
+
+`react-router-effect/server` is a React Router adapter for Effect's Node HTTP server
+(`@effect/platform-node`). It handles everything between an `HttpServerRequest` and React Router. That
+is the Web `Request` and its abort signal, the route factory, and the client build. It also converts
+React Router's `Response`, with its streamed body and every `Set-Cookie` value. The adapter is an
+Effect HTTP app like any other. The app serves it with its own Effect HTTP server and keeps its own
+middleware: logging, compression, tracing, proxies and other routes.
+
+React Router keeps doing what it does for any other server adapter: documents, `.data` requests,
+streamed promises, resource routes, the lazy route manifest and middleware. Before React Router
+sees the build, the adapter runs every loader, action and middleware through your route factory:
+
+- A route function that returns an Effect runs with the factory's runtime and request context.
+  Its failures go through the factory's error handlers.
+- Any other route function passes through. Promise loaders and `makeLoader` wrappers keep working.
+
+The options:
+
+- `build` is the server build, or a function that loads it.
+- `factory` is the route factory.
+- `requestContext: (request) => Context` builds the request's services before React Router runs.
+- `clientAssets: true` serves the client build, `build.assetsBuildDirectory` under
+  `build.publicPath`, before React Router. Files under `assets/` use a content hash in their name,
+  and the adapter caches them for a year as immutable. It caches other files for an hour. The
+  adapter never serves a development build, where Vite serves the client. It needs the platform's
+  file system, which `NodeHttpServer.layer` provides.
+- `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. In production the
+  adapter loads the build once.
+
+The Web request comes from `HttpServerRequest.toWeb`, except its body. The adapter reads a request
+body from Node's stream with React Router's `createReadableStreamFromReadable`, as
+`@react-router/node` does. This costs about 33 µs less per request than Effect's stream. A request
+that sends `Expect: 100-continue` keeps Effect's stream, which sends the `100 Continue`.
+
+The request URL is the one Effect derives from the request. An app behind a proxy applies the
+headers it trusts in its own middleware, with `request.modify` or `HttpMiddleware.xForwardedHeaders`.
+The request signal aborts only if the response ends early. That happens when the client leaves while
+React Router runs, or while the body streams. A completed response never aborts it.
+
+### Development with Vite
+
+In development Vite serves the client. `react-router-effect/vite` runs Vite's middleware in front of
+the app, on Effect's Node HTTP server:
+
+```ts
+import { ReactRouterVite } from "react-router-effect/vite";
+
+const vite = await createServer({ server: { middlewareMode: true } });
+HttpServer.serve(reactRouterApp.pipe(ReactRouterVite.devMiddleware(vite)));
+```
+
+Load the module that calls `ReactRouterHttp.make` through `vite.ssrLoadModule`. Then the route
+modules, the factory and the adapter share Vite's module graph. The example's `server.js` and
+`server/main.ts` do this.
+
+### Cookies
+
+Set cookies from route code with React Router's cookie helpers, `createCookie` and the session
+storages, as in any React Router app. The adapter writes React Router's `Set-Cookie` values to the
+Node response unchanged, as `@react-router/node` does. This includes several cookies with one name.
+
+A cookie that app middleware sets on the `HttpServerResponse`, with `HttpServerResponse.setCookie`,
+replaces React Router's cookies. Node's `writeHead` replaces the `set-cookie` header that the
+adapter wrote.
+
+### Tracing
+
+When the request has a server span, the adapter traces React Router. The span comes from
+`HttpMiddleware.tracer` with a tracer that exports spans, such as `OtelTracer`. Each middleware,
+loader and action runs in a span of its own, such as `react-router.loader routes/todos`. The spans
+nest as React Router calls the functions. This is the example's `GET /todos`:
+
+```text
+GET                           the server span, with http.route=/todos
+└─ react-router.middleware root
+   └─ middleware.visitor      the Effect middleware's own span, around next()
+      ├─ react-router.loader root
+      │  └─ loader.root       the route Effect's span
+      └─ react-router.loader routes/todos
+         └─ loader.todos
+```
+
+A middleware's span covers everything its `next()` runs: the next middleware, then the loaders and
+the action. Route Effects nest under the span of their function. Effect's OpenTelemetry tracer makes
+the current Effect span the active OpenTelemetry context. So the clients that an OpenTelemetry
+instrumentation traces nest there too, such as a database driver that a promise loader calls.
+Without a server span, or with Effect's native tracer, whose spans go nowhere, the adapter adds no
+spans and no cost.
+
+## Route functions
+
+### Plain Effect loaders, actions and middleware
+
+```ts
+export const loader = Effect.fn("loader.dashboard")(function* () {
+  const { organization } = yield* AuthContext.getScope;
+  return { organization };
+});
+
+export const action = Effect.fn("action.createTax")(function* ({
+  request,
+}: EffectRouteArgs<Route.ActionArgs>) {
+  const submission = yield* parseSubmission(request);
+  return data({ reply: submission.reply() }, { status: 201 });
+});
+
+export const middleware = [
+  Effect.fn("middleware.adminOnly")(function* ({
+    next,
+  }: EffectMiddlewareArgs<Route.MiddlewareFunction>) {
+    const user = yield* AuthContext.getUser;
+    if (user.role !== "admin") return redirect("/settings");
+    return yield* next().pipe(Effect.annotateLogs({ userId: user.id }));
+  }),
+];
+```
+
+- Route data: Effects are branded with React Router's `unstable_SerializesTo`. So
+  `Route.ComponentProps` types the data of an Effect loader or action, including what the factory
+  recovers.
+  - Hooks that take `typeof loader` or `typeof action`, such as `useFetcher<typeof action>()`,
+    read the data through React Router's `SerializeFrom`. It treats a function as a client
+    function when its argument has the members of client loader args, and gives client functions
+    their raw return value. Typegen's `Route.LoaderArgs` and `Route.ActionArgs` have those same
+    members, so for an Effect the hook would type the data as the Effect itself.
+  - Take the args through `EffectRouteArgs<Route.LoaderArgs>`. It makes `pattern` optional, so the
+    argument no longer matches and the hook reads the brand. A loader without args needs nothing.
+  - `RouteData<typeof loader>` reads the brand directly and applies React Router's serialization.
+    The brand records the data before serialization: it has to keep Effect's subtype order, and
+    React Router's `Serialize` does not.
+- Middleware: an effect middleware gets `next` as an effect in its args. Services, log annotations
+  and the span that it provides around `next()` reach every route Effect downstream. `context.set`
+  keeps working. You cannot annotate a route array with an effect middleware as
+  `Route.MiddlewareFunction[]`.
+- Action metadata: `actionMeta` in the factory config is read after every action resolves. The
+  adapter attaches it to the action's data under `__meta`.
+- Tests: `routeFactory.handlers.loader(loader)(args)` runs a route function as the server does.
+
+### Register what the factory recovers
+
+A plain Effect loader cannot see the factory's handlers. Declare what they recover once:
+
+```ts
+declare module "react-router-effect" {
+  interface Register {
+    recover: { FormValidationError: { reply: SubmissionResponse } };
+    actionMeta: { realtimeEventIds: ReadonlyArray<string> };
+  }
+}
+```
+
+Declare the types directly. Reading them from `typeof routeFactory` is circular.
+
+### The route check
+
+`RouteEffectCheck` reads the route modules that React Router's typegen registers. It fails to
+compile in three cases:
+
+- A route Effect can fail with an error that the factory does not handle.
+- A route Effect needs a service that the runtime and the request context do not provide.
+- `Register` disagrees with the factory.
+
+```ts
+import type { RouteEffectCheck } from "react-router-effect/server";
+
+export const routeEffects: RouteEffectCheck<typeof routeFactory> = {};
+```
+
+```text
+Type '{}' is missing the following properties from type ...:
+  "routes/billing#loader must handle PlaidApiError",
+  "routes/admin#middleware needs a provider for app/Session"
+```
+
+### Requirements and limits
+
+- Effect 4.1 or later, React Router 8.3 or later for the adapter, and `skipLibCheck`. The brand
+  augments `Effect`, and TypeScript cannot test the variance annotations of that augmentation.
+- A route module export must be a function. A bare `Effect` value is not a loader.
+- Prerendering (`prerender`) and RSC mode call the build without the adapter.
+
+## Without the Effect HTTP server
+
+If your app serves React Router from Express, `@react-router/node`, a serverless platform or another
+server, the adapter does not apply. The same route factory still returns `makeLoader`, `makeAction`
+and `makeMiddleware`. Each wraps one route function. The wrapper runs the Effect with the factory's
+runtime and error handlers, and returns a function that React Router calls.
+
+```ts
+// app/routes/profile.ts
+import { Effect } from "effect";
+import { makeLoader, Respond } from "../route.server.ts";
+import type { Route } from "./+types/profile";
+
+export const loader = makeLoader((args: Route.LoaderArgs) =>
+  Effect.gen(function* () {
+    const profile = yield* getProfile(args.params.id); // can fail with FormError / BadInputError
+    if (!profile.public) {
+      yield* Respond.early({ restricted: true }); // recover with typed data
+    }
+    return { profile };
+  }),
+);
+```
+
+Take `makeLoader`, `makeAction`, `makeMiddleware` and `Respond` from the factory:
+
+```ts
+// app/route.server.ts
+export const { makeLoader, makeAction, makeMiddleware, Respond } =
+  makeEffectRouteFactory<DomainErrors>()((Respond) => ({
+    runtime: appRuntime,
+    errorHandlers: {/* ... */},
+  }));
+```
+
+`makeLoader` and `makeAction` are the same wrapper. The wrapper computes the resolved type from the
+effect and your handlers:
+
+```ts
+type LoaderData = Route.ComponentProps["loaderData"];
+// { profile: Profile } | DataWithResponseInit<{ restricted: boolean }>
+//   ( BadInputError throws, so it never appears here )
+```
+
+Without the adapter, an unhandled error is a compile error at the `makeLoader` or `makeAction` call.
+The message lists the unhandled errors. An effect can also require a service that neither the
+`runtime` nor the `requestContext` provides. That fails the same way, and the message lists the
+missing service.
+
+### Middleware
+
+`makeMiddleware` wraps a [middleware](https://reactrouter.com/how-to/middleware) function the same
+way, with the same `errorHandlers`. Pin it to the route's generated `Route.MiddlewareFunction`.
+Middleware has no separate args-only type, so the full function type is the type argument. If you
+omit the type argument, it defaults to React Router's own `MiddlewareFunction`:
+
+```ts
+import { Effect } from "effect";
+import { makeMiddleware, Respond } from "../route.server.ts";
+import type { Route } from "./+types/profile";
+
+export const middleware: Route.MiddlewareFunction[] = [
+  makeMiddleware<Route.MiddlewareFunction>(({ request }, next) =>
+    Effect.gen(function* () {
+      const user = yield* getUser(request); // can fail with FormError / BadInputError
+      if (!user) yield* Respond.redirect("/login"); // throw → redirect, same as a loader
+      return yield* next(); // run the rest of the chain
+    }),
+  ),
+];
+```
+
+The effect gets `next` as `() => Effect.Effect<Result, FailureResponse>`. It is React Router's own
+`next: () => Promise<Result>`, wrapped. Call it with `yield*` to run the downstream loaders and
+middleware. A downstream throw, such as a nested loader's redirect, becomes a typed failure instead
+of a rejected promise. It flows through the same recover and throw handling as a loader or action.
+
+### Per-request services
+
+Without the adapter there is no `requestContext` option. Set the context key in a plain React Router
+middleware. The factory's `requestContext` reads it, and provides those services to the loader or
+action:
 
 ```ts
 // app/request-context.server.ts
@@ -227,17 +581,13 @@ import { Context } from "effect";
 import { createContext } from "react-router";
 import type { RequestContextKey } from "react-router-effect";
 
-class RequestContext extends Context.Service<
-  RequestContext,
-  {
-    readonly userId: string;
-  }
->()("app/RequestContext") {}
+class RequestContext extends Context.Service<RequestContext, { readonly userId: string }>()(
+  "app/RequestContext",
+) {}
 
-// `requestContext` is a plain React Router context key — `createContext` is RR's own.
 export const requestContext: RequestContextKey<RequestContext> = createContext();
 
-// app/routes/profile.ts — middleware sets a fresh value per request:
+// app/routes/profile.ts: a middleware sets a fresh value for each request.
 export const middleware: Route.MiddlewareFunction[] = [
   ({ context, request }, next) => {
     context.set(requestContext, Context.make(RequestContext, { userId: readUser(request) }));
@@ -245,13 +595,13 @@ export const middleware: Route.MiddlewareFunction[] = [
   },
 ];
 
-// app/route.server.ts — wire the same key into the factory:
+// app/route.server.ts: wire the same key into the factory.
 export const { makeLoader } = makeEffectRouteFactory<DomainErrors>()(() => ({
   runtime: appRuntime,
   requestContext,
 }));
 
-// the loader requires RequestContext directly — no provide, fresh each request:
+// The loader requires RequestContext directly, with a fresh value for each request.
 export const loader = makeLoader(() =>
   Effect.gen(function* () {
     const { userId } = yield* RequestContext;
@@ -260,26 +610,28 @@ export const loader = makeLoader(() =>
 );
 ```
 
-Effects may now require both the runtime's services and the request context's; requiring anything
-else is a compile error. `RequestContextKey<ReqServices>` is a type alias for
-`RouterContext<Context.Context<ReqServices>>` — sugar for annotating the key, nothing more.
-
 ## API
 
-- **`makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond? }))`**
-  → `{ makeLoader, makeAction, makeMiddleware, Respond }` (`makeLoader`/`makeAction` are the same
-  wrapper; `makeMiddleware` wraps a `Route.MiddlewareFunction`, defaulting to react-router's own
-  `MiddlewareFunction`). The config is a _builder_ that receives the base `Respond`; all its fields
-  are optional. The returned `Respond` is the base helpers merged with your `respond` extensions
-  (base helpers win). A non-domain error left in a handler's error channel — or a required service
-  that neither the `runtime` nor the `requestContext` provides — is a compile error.
-- **`RequestContextKey<ReqServices>`** — type of the React Router context key for a per-request
-  effect context (`RouterContext<Context.Context<ReqServices>>`).
-- **`Respond`** (returned from the factory) — `early` (recover), `throw`, `redirect`, plus any
-  `respond` helpers you add.
-- **`ReturnableDataError`**, **`ThrowableDataError`**, **`ThrowableRedirectError`** — the library
-  route errors, and **`isRouteError`** to narrow them.
-- **`ErrorHandler<Err>`** — the handler signature type.
+- `makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond?, actionMeta? }))`
+  returns `{ makeLoader, makeAction, makeMiddleware, Respond, handlers }`. The config is a builder
+  that receives the base `Respond`. All its fields are optional. The returned `Respond` is the base
+  helpers merged with your `respond` extensions, and the base helpers win. `makeLoader` and
+  `makeAction` are the same wrapper. `makeMiddleware` wraps a `Route.MiddlewareFunction`, and
+  defaults to React Router's own `MiddlewareFunction`.
+- `handlers` (`loader`, `action`, `middleware`, `requestContext`) is the runner that the server
+  adapter applies to every route module.
+- `Respond` has `early` (recover), `throw` and `redirect`, and the `respond` helpers that you add.
+- `ReturnableDataError`, `ThrowableDataError` and `ThrowableRedirectError` are the library route
+  errors. `isRouteError` narrows them.
+- `ErrorHandler<Err>` is the handler signature type.
+- `RequestContextKey<ReqServices>` is the type of the React Router context key for a per-request
+  effect context.
+- `EffectRouteArgs<Args>`, `EffectMiddlewareArgs<Middleware>`, `RouteData<F>` and `Register` are the
+  types of plain Effect routes.
+- `react-router-effect/server` exports `ReactRouterHttp.make`, and the types `RouteEffectCheck` and
+  `RouteEffectFailures`. It needs `@effect/platform-node` and `@react-router/node`, which a React
+  Router app on Node already has.
+- `react-router-effect/vite` exports `ReactRouterVite.devMiddleware`, for development.
 
 ## Development
 

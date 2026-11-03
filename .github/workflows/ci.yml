@@ -65,3 +65,6 @@ jobs:
 
       - name: Build (pack)
         run: vp pack
+
+      - name: Type check the built package as a consumer
+        run: vp run check:consumer

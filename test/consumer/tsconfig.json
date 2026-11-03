@@ -1,0 +1,15 @@
+{
+  // A consumer's project with the strictest settings: it checks the published
+  // types in `dist` as an app sees them, library declarations included.
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "types": ["node"]
+  },
+  "files": ["index.ts"]
+}

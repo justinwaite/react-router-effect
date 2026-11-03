@@ -17,10 +17,10 @@ class RecoverableError extends Data.TaggedError("RecoverableError")<{
 class GoAwayError extends Data.TaggedError("GoAwayError")<{}> {}
 class RedirectingError extends Data.TaggedError("RedirectingError")<{ readonly to: string }> {}
 
-/** A declared domain error with no registered handler — falls through to the 500 default. */
+/** A declared domain error with no registered handler - falls through to the 500 default. */
 class UnhandledDomainError extends Data.TaggedError("UnhandledDomainError")<{}> {}
 
-/** A domain error that handles itself via `HttpServerRespondable` — no handler needed. */
+/** A domain error that handles itself via `HttpServerRespondable` - no handler needed. */
 class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
   [HttpServerRespondable.symbol](): Effect.Effect<HttpServerResponse.HttpServerResponse> {
     return HttpServerResponse.json({ error: "Not authorized" }, { status: 403 }).pipe(Effect.orDie);

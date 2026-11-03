@@ -5,7 +5,7 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // The inner config is a *builder* that receives the base `Respond` (so handlers
-// can recover/throw), and the factory returns a single `Respond` — the base
+// can recover/throw), and the factory returns a single `Respond` - the base
 // helpers merged with any `respond` extensions, typed precisely.
 // ---------------------------------------------------------------------------
 

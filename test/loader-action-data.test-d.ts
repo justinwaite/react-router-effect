@@ -14,7 +14,7 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 // What a *component* actually reads. `useLoaderData<typeof loader>()` returns
 // `SerializeFrom<typeof loader>`, which strips `DataWithResponseInit<U>` down to
 // its serialized body `U`. These aliases assert exactly that component-facing
-// type — the data that comes out of a loader/action — not just the raw Promise.
+// type - the data that comes out of a loader/action - not just the raw Promise.
 // ---------------------------------------------------------------------------
 
 /** The type a component receives from `useLoaderData<typeof loader>()`. */
@@ -41,8 +41,8 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
 
 type DomainErrors = BadInputError | FormError | RecoverableError | GoAwayError;
 
-// Handler params are intentionally un-annotated — they're typed contextually from
-// their key — yet the recover types below stay precise.
+// Handler params are intentionally un-annotated - they're typed contextually from
+// their key - yet the recover types below stay precise.
 const { makeLoader, makeAction, Respond } = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
   errorHandlers: {
     // throw → contributes nothing to the resolved data
@@ -60,7 +60,7 @@ const empty = makeEffectRouteFactory()(() => ({ errorHandlers: {} }));
 
 // ---------------------------------------------------------------------------
 // loaderData = the effect's own success ∪ directly-recovered bodies ∪ the
-// recoveries of registered handlers whose error can actually occur — with every
+// recoveries of registered handlers whose error can actually occur - with every
 // `DataWithResponseInit<U>` unwrapped to `U`.
 // ---------------------------------------------------------------------------
 
@@ -77,7 +77,7 @@ describe("loaderData — success & direct route errors", () => {
         return true;
       }),
     );
-    // Raw library return still carries the DataWithResponseInit wrapper...
+    // Raw library return still has the DataWithResponseInit wrapper...
     expectTypeOf(loader).returns.resolves.toEqualTypeOf<
       boolean | DataWithResponseInit<{ message: string }>
     >();
@@ -162,7 +162,7 @@ describe("loaderData — registered handlers", () => {
 
   it("only recoveries for errors that can actually occur are included", () => {
     // The factory registers four handlers, but this loader can only raise
-    // FormError — so RecoverableError's `{ recovered: number }` must NOT appear.
+    // FormError - so RecoverableError's `{ recovered: number }` must NOT appear.
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         yield* new FormError({ reply: "invalid" });

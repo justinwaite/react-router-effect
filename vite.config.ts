@@ -26,7 +26,7 @@ export default defineConfig({
       },
       {
         // Real-browser integration tests: a `makeLoader`/`makeAction` driven
-        // through a real React Router runtime (`createRoutesStub`) so the
+        // through the actual React Router runtime (`createRoutesStub`) so the
         // recover/throw/redirect/500 flow runs end-to-end in Chromium.
         plugins: [react()],
         // Pre-bundle these up front so Vitest doesn't discover them mid-run and
@@ -62,6 +62,11 @@ export default defineConfig({
     ],
   },
   pack: {
+    entry: {
+      index: "src/index.ts",
+      server: "src/server-entry.ts",
+      vite: "src/vite-entry.ts",
+    },
     dts: {
       generator: "tsgo",
     },

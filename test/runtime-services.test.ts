@@ -10,7 +10,7 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 // services WITHOUT providing layers themselves.
 // ---------------------------------------------------------------------------
 
-/** Counts how many times the layer is built — proves the runtime builds once. */
+/** Counts how many times the layer is built - proves the runtime builds once. */
 let databaseBuilds = 0;
 
 class Database extends Context.Service<Database>()("test/Database", {
@@ -61,7 +61,7 @@ async function settle<T>(promise: Promise<T>) {
 // ---------------------------------------------------------------------------
 
 describe("makeLoader / makeAction with a runtime", () => {
-  // No domain errors, no handlers — just a runtime. Exercises the optional
+  // No domain errors, no handlers - just a runtime. Exercises the optional
   // `errorHandlers` path too.
   const { makeLoader, makeAction, Respond } = makeEffectRouteFactory()(() => ({ runtime }));
 

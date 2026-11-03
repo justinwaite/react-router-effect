@@ -30,6 +30,8 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.mjs",
+    "./server": "./dist/server.mjs",
+    "./vite": "./dist/vite.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -43,6 +45,7 @@
     "test:browser": "vp test run --project browser",
     "test:browser:install": "vp exec playwright install chromium",
     "check": "vp check",
+    "check:consumer": "tsc -p test/consumer",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:release": "vp run build && changeset publish",
@@ -52,13 +55,15 @@
   "devDependencies": {
     "@changesets/changelog-github": "^1.0.1",
     "@changesets/cli": "^3.0.3",
+    "@effect/platform-node": "4.1.1",
+    "@react-router/node": "8.4.0",
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "@vitest/browser": "5.0.5",
     "@vitest/browser-playwright": "5.0.5",
-    "effect": "4.0.5",
+    "effect": "4.1.1",
     "playwright": "1.64.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -70,8 +75,18 @@
     "vitest-browser-react": "^2.2.0"
   },
   "peerDependencies": {
-    "effect": "^4.0.0",
+    "@effect/platform-node": "^4.1.0",
+    "@react-router/node": "^7.16.0 || ^8.3.0",
+    "effect": "^4.1.0",
     "react-router": "^7.16.0 || ^8.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "@react-router/node": {
+      "optional": true
+    }
   },
   "devEngines": {
     "packageManager": {
