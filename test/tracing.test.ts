@@ -2,7 +2,7 @@ import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Effect, Layer, ManagedRuntime, Option, Tracer } from "effect";
-import { HttpServer } from "effect/http";
+import { HttpMiddleware, HttpServer } from "effect/http";
 import type { ServerBuild } from "react-router";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -64,6 +64,14 @@ const routes = {
       return yield* Respond.redirect("/page", 303);
     }),
   }),
+  cookies: route("cookies", "cookies", {
+    loader: () => {
+      const headers = new Headers();
+      headers.append("set-cookie", "session=a; Path=/");
+      headers.append("set-cookie", "theme=dark; Path=/");
+      return new Response("ok", { headers });
+    },
+  }),
   broken: route("broken", "broken", {
     loader: async () => {
       throw new Error("boom");
@@ -119,6 +127,12 @@ beforeAll(async () => {
     HttpServer.serve(app).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
       Layer.provide(Layer.succeed(Tracer.Tracer)(recordingTracer)),
+      // Records the `set-cookie` response header on the server span, which is opt-in.
+      Layer.provide(
+        Layer.succeed(HttpMiddleware.TracerHeaderFilter)(
+          (name, phase) => phase === "response" && name === "set-cookie",
+        ),
+      ),
     ),
   );
   const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
@@ -220,5 +234,11 @@ describe("spans", () => {
     };
     expect(exitOf("react-router.loader redirect")).toBe("Success");
     expect(exitOf("react-router.loader broken")).toBe("Failure");
+  });
+
+  it("keeps React Router's cookies out of the server span", async () => {
+    expect((await fetch(`${origin}/cookies`)).headers.getSetCookie()).toHaveLength(2);
+    await ended();
+    expect(spanNamed("GET").attributes.has("http.response.header.set-cookie")).toBe(false);
   });
 });

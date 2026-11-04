@@ -2,7 +2,13 @@ import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
-import { Headers as HttpHeaders, HttpMiddleware, HttpServer, HttpServerRequest } from "effect/http";
+import {
+  Headers as HttpHeaders,
+  HttpMiddleware,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import { createCookie, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -83,6 +89,8 @@ const sessionCookie = createCookie("rr_session", {
 /** The `Set-Cookie` values the cookie route sends, by the `case` query parameter. */
 const cookieValues = async (name: string | null): Promise<ReadonlyArray<string>> => {
   switch (name) {
+    case "distinct":
+      return ["session=a; Path=/; HttpOnly", "theme=dark; Path=/"];
     case "shared-name":
       return ["session=a; Path=/; HttpOnly", "session=b; Path=/admin; HttpOnly"];
     case "react-router":
@@ -145,6 +153,13 @@ const routes = {
         headers.append("set-cookie", value);
       }
       return new Response("ok", { headers });
+    },
+  }),
+  cookieRedirect: route("cookieRedirect", "cookie-redirect", {
+    loader: async () => {
+      const headers = new Headers({ location: "/elsewhere" });
+      for (const value of await cookieValues("distinct")) headers.append("set-cookie", value);
+      return new Response(null, { status: 303, headers });
     },
   }),
   origin: route("origin", "origin", {
@@ -238,9 +253,46 @@ const proxyHeaders = HttpMiddleware.make((httpApp) =>
   }),
 );
 
-const ServerLive = HttpServer.serve(proxyHeaders(app), HttpMiddleware.compression()).pipe(
-  Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+/**
+ * Changes the app's response as an app's own middleware would, by the
+ * `x-test-outer` header: `add-cookie` adds a cookie through Effect's cookie
+ * API, `same-name` adds one with the name of a React Router cookie,
+ * `read-cookies` lists the names of the response's cookies in a header,
+ * `raw-header` sets a `set-cookie` header,
+ * `replace` sends a 503 in place of React Router's response, and `fail` dies
+ * after React Router answered.
+ */
+const outerResponse = HttpMiddleware.make((httpApp) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const response = yield* httpApp;
+    switch (request.headers["x-test-outer"]) {
+      case "add-cookie":
+        return HttpServerResponse.setCookieUnsafe(response, "outer", "1");
+      case "same-name":
+        return HttpServerResponse.setCookieUnsafe(response, "session", "outer");
+      case "read-cookies":
+        return HttpServerResponse.setHeader(
+          response,
+          "x-cookie-names",
+          Object.keys(response.cookies.cookies).join(","),
+        );
+      case "raw-header":
+        return HttpServerResponse.setHeader(response, "set-cookie", "raw=1; Path=/");
+      case "replace":
+        return HttpServerResponse.empty({ status: 503 });
+      case "fail":
+        return yield* Effect.die(new Error("outer middleware failed"));
+      default:
+        return response;
+    }
+  }),
 );
+
+const ServerLive = HttpServer.serve(
+  proxyHeaders(outerResponse(app)),
+  HttpMiddleware.compression(),
+).pipe(Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })));
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;
 let origin = "";
@@ -362,28 +414,105 @@ describe("single fetch", () => {
 });
 
 describe("responses", () => {
-  it("writes every Set-Cookie value, including ones that share a name", async () => {
+  it("writes every Set-Cookie value", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`);
+    expect(response.headers.getSetCookie()).toEqual(await cookieValues("distinct"));
+  });
+
+  it("keeps the last of two cookies that share a name, as Effect does", async () => {
     const response = await fetch(`${origin}/cookies?case=shared-name`);
+    expect(response.headers.getSetCookie()).toEqual(["session=b; Path=/admin; HttpOnly"]);
+  });
+
+  it("keeps the last value of a cookie that is expired and set again", async () => {
+    const response = await fetch(`${origin}/cookies?case=replaced`);
+    expect(response.headers.getSetCookie()).toEqual(["s=new; Path=/", "other=1; Path=/"]);
+  });
+
+  it("gives an outer middleware React Router's cookies in response.cookies", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "read-cookies" },
+    });
+    expect(response.headers.get("x-cookie-names")).toBe("session,theme");
+  });
+
+  it("writes React Router's cookies with one an outer middleware adds", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "add-cookie" },
+    });
     expect(response.headers.getSetCookie()).toEqual([
-      "session=a; Path=/; HttpOnly",
-      "session=b; Path=/admin; HttpOnly",
+      ...(await cookieValues("distinct")),
+      "outer=1",
     ]);
   });
 
-  it("keeps the order of cookies that share a name, so a later one replaces an earlier one", async () => {
-    const response = await fetch(`${origin}/cookies?case=replaced`);
-    const values = response.headers.getSetCookie();
-    expect(values).toEqual(await cookieValues("replaced"));
+  it("writes none of React Router's cookies when an outer middleware replaces the response", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "replace" },
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.getSetCookie()).toEqual([]);
   });
 
-  it("writes a React Router cookie unchanged", async () => {
+  it("writes the cookie an outer middleware sets in place of React Router's cookie with that name", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "same-name" },
+    });
+    expect(response.headers.getSetCookie()).toEqual(["session=outer", "theme=dark; Path=/"]);
+  });
+
+  it("writes React Router's cookies with a set-cookie header an outer middleware sets", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "raw-header" },
+    });
+    expect(response.headers.getSetCookie()).toEqual([
+      ...(await cookieValues("distinct")),
+      "raw=1; Path=/",
+    ]);
+  });
+
+  it("writes none of React Router's cookies when an outer middleware fails after React Router answered", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "x-test-outer": "fail" },
+    });
+    expect(response.status).toBe(500);
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("writes React Router's cookies on a redirect", async () => {
+    const response = await fetch(`${origin}/cookie-redirect`, { redirect: "manual" });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/elsewhere");
+    expect(response.headers.getSetCookie()).toEqual(await cookieValues("distinct"));
+  });
+
+  it("writes React Router's cookies on a HEAD request", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, { method: "HEAD" });
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual(await cookieValues("distinct"));
+  });
+
+  it("writes React Router's cookies on a compressed response", async () => {
+    const response = await fetch(`${origin}/cookies?case=distinct`, {
+      headers: { "accept-encoding": "gzip" },
+    });
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect(response.headers.getSetCookie()).toEqual(await cookieValues("distinct"));
+    expect(await response.text()).toBe("ok");
+  });
+
+  it("writes a React Router cookie with every attribute it has", async () => {
     const response = await fetch(`${origin}/cookies?case=react-router`);
-    expect(response.headers.getSetCookie()).toEqual(await cookieValues("react-router"));
+    /** The parts of a `Set-Cookie` value, in any order: Effect writes `Priority` earlier. */
+    const parts = (value: string | undefined) => value?.split("; ").toSorted();
+    const [sent] = response.headers.getSetCookie();
+    const [made] = await cookieValues("react-router");
+    expect(parts(sent)).toEqual(parts(made));
   });
 
-  it("writes values with extension attributes unchanged", async () => {
+  it("drops attributes Effect does not know", async () => {
     const response = await fetch(`${origin}/cookies?case=extension`);
-    expect(response.headers.getSetCookie()).toEqual(await cookieValues("extension"));
+    expect(response.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/", "c=3; Path=/"]);
   });
 
   it("builds the request URL from the request the app's middleware modified", async () => {

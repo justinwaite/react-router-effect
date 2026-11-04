@@ -22,8 +22,6 @@
  *
  * @since 2.1.0
  */
-import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
-import { createReadableStreamFromReadable } from "@react-router/node";
 import {
   Cause,
   Context,
@@ -37,7 +35,7 @@ import {
   Tracer,
 } from "effect";
 import {
-  HttpMethod,
+  Cookies,
   type HttpPlatform,
   HttpServerError,
   HttpServerRequest,
@@ -88,102 +86,41 @@ export interface Options {
 }
 
 // ---------------------------------------------------------------------------
-// Request conversion.
-// ---------------------------------------------------------------------------
-
-/**
- * The Web `Request` React Router gets, as `HttpServerRequest.toWeb` builds it,
- * from the request as the app's middleware left it: a middleware that applies
- * proxy headers with `request.modify` sets the origin React Router sees.
- *
- * A request body is read from Node's stream with React Router's own
- * `createReadableStreamFromReadable`, as `@react-router/node` reads it.
- * `toWeb` reads it through an Effect stream, which costs about 33 µs more per
- * request (`examples/basic/README.md`). A request that sends `Expect` keeps
- * Effect's stream, which sends the `100 Continue` when the body is read.
- */
-const toWebRequest = (
-  request: HttpServerRequest.HttpServerRequest,
-  signal: AbortSignal,
-): Effect.Effect<Request, HttpServerError.RequestError> => {
-  if (!HttpMethod.hasBody(request.method) || request.headers.expect !== undefined) {
-    return HttpServerRequest.toWeb(request, { signal });
-  }
-  const url = HttpServerRequest.toURL(request);
-  if (Option.isNone(url)) {
-    return Effect.fail(
-      new HttpServerError.RequestParseError({ request, description: "Invalid URL" }),
-    );
-  }
-  const init: RequestInit & { readonly duplex: "half" } = {
-    method: request.method,
-    headers: request.headers,
-    signal,
-    body: createReadableStreamFromReadable(NodeHttpServerRequest.toIncomingMessage(request)),
-    // A streamed request body needs half duplex.
-    duplex: "half",
-  };
-  return Effect.succeed(new Request(url.value, init));
-};
-
-// ---------------------------------------------------------------------------
 // Response conversion.
 // ---------------------------------------------------------------------------
 
 /**
- * Aborts the request signal when the Node response closes before it finished:
- * the client left while React Router ran or while the body streamed, or a
- * write failed. React Router then stops streamed promises, and route code
- * sees the abort. `@react-router/node` aborts its signal the same way. A
- * completed response never aborts it.
+ * Converts React Router's response. Its `Set-Cookie` values become the
+ * response's cookies, as `HttpServerResponse.fromWeb` converts them, so
+ * middleware after the adapter can read and change them. Effect keeps one
+ * cookie per name, the last one, and only the attributes it knows.
  *
- * One listener per request costs less than watching the body stream, which
- * would wrap every chunk.
- */
-const abortOnClose = (
-  request: HttpServerRequest.HttpServerRequest,
-  controller: AbortController,
-): void => {
-  const response = NodeHttpServerRequest.toServerResponse(request);
-  response.once("close", () => {
-    if (!response.writableFinished) controller.abort();
-  });
-};
-
-/**
- * Converts React Router's response. Its `Set-Cookie` values go to the Node
- * response unchanged, as `@react-router/node` writes them: an
- * `HttpServerResponse` holds one raw `set-cookie` header, and writes the
- * cookies of its record again from their parsed form.
+ * When the body stream ends before it finished, because the client left or a
+ * write failed, the request signal aborts: React Router then stops streamed
+ * promises, and route code sees the abort. A completed response never aborts it.
  */
 const toHttpResponse = (
-  request: HttpServerRequest.HttpServerRequest,
   response: Response,
+  controller: AbortController,
 ): HttpServerResponse.HttpServerResponse => {
-  const headers: Record<string, string> = {};
-  let hasCookies = false;
-  // A Web `Headers` iterates `set-cookie` values one by one, and every other header once, combined.
-  for (const [name, value] of response.headers) {
-    if (name === "set-cookie") hasCookies = true;
-    else headers[name] = value;
-  }
-  if (hasCookies) {
-    NodeHttpServerRequest.toServerResponse(request).appendHeader(
-      "set-cookie",
-      response.headers.getSetCookie(),
-    );
-  }
+  const headers = new Headers(response.headers);
+  headers.delete("set-cookie");
   // React Router leaves `statusText` empty; Node then sends its standard reason phrase.
   const init = {
     status: response.status,
     statusText: response.statusText === "" ? undefined : response.statusText,
     headers,
+    cookies: Cookies.fromSetCookie(response.headers.getSetCookie()),
   };
   const body = response.body;
   return body === null
     ? HttpServerResponse.empty(init)
     : HttpServerResponse.stream(
-        Stream.fromReadableStream({ evaluate: () => body, onError: (error) => error }),
+        Stream.fromReadableStream({ evaluate: () => body, onError: (error) => error }).pipe(
+          Stream.onExit((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => controller.abort()),
+          ),
+        ),
         init,
       );
 };
@@ -636,8 +573,7 @@ export const make = <const O extends Options>(options: O): App<O> => {
     // route that needs a scope opens its own with `Effect.scoped`.
     const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
     const controller = new AbortController();
-    abortOnClose(httpRequest, controller);
-    const request = yield* toWebRequest(httpRequest, controller.signal);
+    const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
     const routerContext = new RouterContextProvider();
     routerContext.set(
       options.factory.handlers.requestContext,
@@ -645,7 +581,7 @@ export const make = <const O extends Options>(options: O): App<O> => {
     );
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
-    return toHttpResponse(httpRequest, response);
+    return toHttpResponse(response, controller);
   });
   // The client build's requirements apply only when the options serve it.
   return app as unknown as App<O>;

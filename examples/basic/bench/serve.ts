@@ -18,21 +18,19 @@
  *   Their differences to `node-floor` are the costs of the servers
  *   themselves.
  * - `effect-minimal`: the least an Effect server can do to serve React
- *   Router: the Web request from `HttpServerRequest.toWeb`, with a request
- *   body read as the adapter reads it, React Router's handler, and
- *   `HttpServerResponse.fromWeb`. It drops what the adapter adds: the request
- *   fiber's context for route Effects, the abort signal, every cookie, the
- *   client build, the build cache, and tracing.
+ *   Router: the Web request from `HttpServerRequest.toWeb`, React Router's
+ *   handler, and `HttpServerResponse.fromWeb`. It drops what the adapter
+ *   adds: the request fiber's context for route Effects, the abort signal,
+ *   the client build, the build cache, and tracing.
  */
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { createRequestHandler } from "@react-router/express";
-import { createReadableStreamFromReadable, createRequestListener } from "@react-router/node";
+import { createRequestListener } from "@react-router/node";
 import { Effect, Layer } from "effect";
-import { HttpMethod, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import express from "express";
 import { createRequestHandler as createRouterHandler } from "react-router";
 import type { ReactRouterHttp } from "react-router-effect/server";
@@ -80,16 +78,7 @@ switch (kind) {
     serveEffect(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const web = HttpMethod.hasBody(request.method)
-          ? new Request(new URL(request.url, `http://${request.headers.host}`), {
-              method: request.method,
-              headers: request.headers,
-              body: createReadableStreamFromReadable(
-                NodeHttpServerRequest.toIncomingMessage(request),
-              ),
-              duplex: "half",
-            } as RequestInit)
-          : yield* HttpServerRequest.toWeb(request);
+        const web = yield* HttpServerRequest.toWeb(request);
         const context = baselineContext(server, request.headers["x-request-id"]);
         return HttpServerResponse.fromWeb(yield* Effect.promise(() => handler(web, context)));
       }),

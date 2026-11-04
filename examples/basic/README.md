@@ -51,8 +51,7 @@ and none logs, compresses or traces.
   adapter. Three floor servers answer every request with a fixed body, without React Router:
   `node:http`, Effect's server, and Express with the template's `express.static`. Their difference
   to `node:http` is each server's own cost. `effect-minimal` is the least an Effect server can do to
-  call React Router: `HttpServerRequest.toWeb` with the adapter's request body, the handler, and
-  `HttpServerResponse.fromWeb`. The adapter's own work is its difference to `effect-minimal`.
+  call React Router: `HttpServerRequest.toWeb`, the handler, and `HttpServerResponse.fromWeb`. The adapter's own work is its difference to `effect-minimal`.
 - `bench/request-body.ts`: the request body alone, from Node's stream to a Web `Request` and its
   form data, per way of reading it.
 
@@ -61,55 +60,51 @@ rounds. The last column is the range of the 3 rounds.
 
 | Case                    | `@react-router/node` | Express template | react-router-effect | vs Express | Rounds |
 | ----------------------- | -------------------- | ---------------- | ------------------- | ---------- | ------ |
-| document, promise       | 1,251 req/s          | 1,142 req/s      | 1,106 req/s         | 97%        | 88–97% |
-| document, Effect        | 1,361 req/s          | 1,287 req/s      | 1,181 req/s         | 92%        | 92–95% |
-| `.data`, promise loader | 3,484 req/s          | 3,139 req/s      | 2,907 req/s         | 93%        | 91–95% |
-| `.data`, Effect loader  | 3,350 req/s          | 3,022 req/s      | 2,883 req/s         | 95%        | 92–99% |
-| action, promise         | 3,612 req/s          | 3,522 req/s      | 3,092 req/s         | 88%        | 87–89% |
-| action, Effect          | 3,448 req/s          | 3,378 req/s      | 3,018 req/s         | 89%        | 87–92% |
-| client file             | –                    | 10,633 req/s     | 4,354 req/s         | 41%        |        |
+| document, promise       | 1,256 req/s          | 1,189 req/s      | 1,042 req/s         | 88%        | 87–94% |
+| document, Effect        | 1,433 req/s          | 1,355 req/s      | 1,200 req/s         | 89%        | 87–89% |
+| `.data`, promise loader | 3,582 req/s          | 3,328 req/s      | 2,885 req/s         | 87%        | 84–90% |
+| `.data`, Effect loader  | 3,524 req/s          | 3,221 req/s      | 2,779 req/s         | 86%        | 85–90% |
+| action, promise         | 3,882 req/s          | 3,532 req/s      | 2,719 req/s         | 77%        | 74–78% |
+| action, Effect          | 3,741 req/s          | 3,487 req/s      | 2,777 req/s         | 80%        | 78–82% |
+| client file             | –                    | 10,934 req/s     | 4,716 req/s         | 43%        | 39–43% |
 
 Where the time goes, per request against `@react-router/node`, Express / the adapter:
 
 | Case                    | Total         | The server itself | Request and response against Web ones | The adapter's own work |
 | ----------------------- | ------------- | ----------------- | ------------------------------------- | ---------------------- |
-| document, promise       | +76 / +104 µs | +22 / +5 µs       | +54 / +101 µs                         | -1 µs                  |
-| document, Effect        | +42 / +112 µs | +23 / +4 µs       | +19 / +86 µs                          | +22 µs                 |
-| `.data`, promise loader | +32 / +57 µs  | +25 / +6 µs       | +7 / +28 µs                           | +23 µs                 |
-| `.data`, Effect loader  | +32 / +48 µs  | +23 / +5 µs       | +9 / +23 µs                           | +21 µs                 |
-| action, promise         | +7 / +47 µs   | +7 / +4 µs        | 0 / +14 µs                            | +29 µs                 |
-| action, Effect          | +6 / +41 µs   | +7 / +5 µs        | -1 / +10 µs                           | +27 µs                 |
+| document, promise       | +17 / +127 µs | +22 / +5 µs       | -5 / +59 µs                           | +64 µs                 |
+| document, Effect        | +46 / +152 µs | +23 / +5 µs       | +24 / +44 µs                          | +103 µs                |
+| `.data`, promise loader | +28 / +65 µs  | +23 / +5 µs       | +5 / +20 µs                           | +40 µs                 |
+| `.data`, Effect loader  | +30 / +68 µs  | +23 / +6 µs       | +6 / +22 µs                           | +40 µs                 |
+| action, promise         | +14 / +114 µs | +8 / +4 µs        | +6 / +55 µs                           | +55 µs                 |
+| action, Effect          | +16 / +92 µs  | +8 / +4 µs        | +9 / +41 µs                           | +47 µs                 |
 
 A server varies by 2–10% between rounds on this machine, about 10–30 µs on a `.data` request and
 more on a document, so read the rows as approximate.
 
-- **The server itself.** Effect's HTTP server costs 4–6 µs per request. Express costs 22–25 µs
+- **The server itself.** Effect's HTTP server costs 4–6 µs per request. Express costs 22–23 µs
   on a GET, most of it `express.static` looking for a file on every request before React Router
-  runs, and 7 µs on a POST, which `express.static` skips.
+  runs, and 8 µs on a POST, which `express.static` skips.
 - **Request and response against Web ones.** `@react-router/express` converts as
   `@react-router/node` does, so Express adds next to nothing here. On Effect's server, React
   Router's response body streams through an Effect `Stream`, chunk by chunk, so documents, which
-  stream the most chunks, pay the most. The body is an `HttpServerResponse` so that the app's own
+  stream the most chunks, pay the most. Actions also read the request body through an Effect stream.
+  The response body is an `HttpServerResponse` so that the app's own
   middleware, such as compression, can work on it; writing it to Node directly would bypass that.
-- **The adapter's own work**, 21–29 µs: what the adapter adds to `effect-minimal`. Switching its
-  parts off one at a time, all of them together, brought it to `effect-minimal`'s cost. They are
-  the request fiber's context for route Effects, the abort signal of the request, the client build
-  lookup, the call into React Router with interruption, the response conversion that keeps every
-  cookie, and the tracing check. None measured above about 15 µs on its own, which is below what this
-  machine resolves reliably, and each is a feature the adapter needs.
+- **The adapter's own work**, 40–103 µs: what the adapter adds to `effect-minimal`. It is the
+  request fiber's context for route Effects, the abort signal, which watches the response body with
+  `Stream.onExit`, the client build lookup, the call into React Router with interruption, the
+  response conversion, and the tracing check. The document rows vary the most between rounds.
 
 What changed the numbers:
 
-- The request body. `HttpServerRequest.toWeb` reads a body through an Effect stream, which costs
-  about 33 µs more per request under load than React Router's `createReadableStreamFromReadable`
-  (`bench/request-body.ts`). The adapter reads bodies with React Router's function, as
-  `@react-router/node` does. A request that sends `Expect` keeps Effect's stream, which sends the
-  `100 Continue`. Actions went from 81% to 88% of Express.
-- The abort signal. A `Stream.onExit` on the response body aborted the signal when a client left
-  mid-stream, and wrapped every chunk. Listening for the Node response's `close` event, as
-  `@react-router/node` does, cost about 25 µs less per request.
-- Loading a production build once, not on every request, writing `Set-Cookie` values raw, copying
-  response headers once, and listing the client build once per build.
+- Loading a production build once, not on every request, copying response headers once, and
+  listing the client build once per build.
+- The adapter uses only Effect's HTTP modules. Two Node-specific versions were faster but are not
+  kept. Reading the request body with React Router's `createReadableStreamFromReadable` cost about
+  33 µs less per request than Effect's stream (`bench/request-body.ts`). Listening for the Node
+  response's `close` event cost about 25 µs less per request than a `Stream.onExit` on the response
+  body.
 - Did not help, so not kept: streaming a client file with headers kept from its first response,
   without the static server's second lookup; piping the response body through Node streams
   (`Readable.fromWeb` and a raw response), slower by 30–80 µs per request.

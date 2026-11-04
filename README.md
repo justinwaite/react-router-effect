@@ -28,15 +28,8 @@ If your app does not serve React Router from an Effect HTTP server, read
 vp add react-router-effect effect @effect/platform-node
 ```
 
-`effect`, `@effect/platform-node`, `react-router` and `@react-router/node` are peer dependencies.
-The library requires Effect 4.1 (`effect@^4.1.0`). The server adapter runs on Effect's Node HTTP
-server and reads request bodies with `@react-router/node`.
-
-A React Router framework app on Node already has `react-router` and `@react-router/node` in its
-`dependencies`. React Router's templates list both, and its default Node server entry imports from
-`@react-router/node` at runtime. They are not additional dependencies. If your app gets
-`@react-router/node` only through `@react-router/dev`, a dev dependency, add it to `dependencies` at
-your `react-router` version.
+`effect`, `@effect/platform-node` and `react-router` are peer dependencies. The library requires
+Effect 4.1 (`effect@^4.1.0`). Only `react-router-effect/vite` imports `@effect/platform-node`.
 
 ## Get started
 
@@ -315,7 +308,7 @@ requirement is a compile error. `RequestContextKey<ReqServices>` is an alias of
 `react-router-effect/server` is a React Router adapter for Effect's Node HTTP server
 (`@effect/platform-node`). It handles everything between an `HttpServerRequest` and React Router. That
 is the Web `Request` and its abort signal, the route factory, and the client build. It also converts
-React Router's `Response`, with its streamed body and every `Set-Cookie` value. The adapter is an
+React Router's `Response`, with its streamed body and its cookies. The adapter is an
 Effect HTTP app like any other. The app serves it with its own Effect HTTP server and keeps its own
 middleware: logging, compression, tracing, proxies and other routes.
 
@@ -340,10 +333,8 @@ The options:
 - `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. In production the
   adapter loads the build once.
 
-The Web request comes from `HttpServerRequest.toWeb`, except its body. The adapter reads a request
-body from Node's stream with React Router's `createReadableStreamFromReadable`, as
-`@react-router/node` does. This costs about 33 µs less per request than Effect's stream. A request
-that sends `Expect: 100-continue` keeps Effect's stream, which sends the `100 Continue`.
+The Web request comes from `HttpServerRequest.toWeb`, body included. Effect's stream sends the
+`100 Continue` when React Router reads the body of a request that sends `Expect: 100-continue`.
 
 The request URL is the one Effect derives from the request. An app behind a proxy applies the
 headers it trusts in its own middleware, with `request.modify` or `HttpMiddleware.xForwardedHeaders`.
@@ -369,12 +360,15 @@ modules, the factory and the adapter share Vite's module graph. The example's `s
 ### Cookies
 
 Set cookies from route code with React Router's cookie helpers, `createCookie` and the session
-storages, as in any React Router app. The adapter writes React Router's `Set-Cookie` values to the
-Node response unchanged, as `@react-router/node` does. This includes several cookies with one name.
+storages, as in any React Router app. The adapter converts React Router's `Set-Cookie` values into
+the response's `cookies`, as `HttpServerResponse.fromWeb` does. Effect HTTP middleware around the
+adapter can read and change them like any other cookie. A response that replaces React Router's has
+none of them.
 
-A cookie that app middleware sets on the `HttpServerResponse`, with `HttpServerResponse.setCookie`,
-replaces React Router's cookies. Node's `writeHead` replaces the `set-cookie` header that the
-adapter wrote.
+Effect keeps one cookie per name and only the attributes it knows: `Max-Age`, `Domain`, `Path`,
+`Expires`, `HttpOnly`, `Secure`, `Partitioned`, `Priority` and `SameSite`. If one response sets the
+same cookie name twice, for example to expire it on one path and set it on another, only the last
+one is sent.
 
 ### Tracing
 
@@ -629,9 +623,9 @@ export const loader = makeLoader(() =>
 - `EffectRouteArgs<Args>`, `EffectMiddlewareArgs<Middleware>`, `RouteData<F>` and `Register` are the
   types of plain Effect routes.
 - `react-router-effect/server` exports `ReactRouterHttp.make`, and the types `RouteEffectCheck` and
-  `RouteEffectFailures`. It needs `@effect/platform-node` and `@react-router/node`, which a React
-  Router app on Node already has.
-- `react-router-effect/vite` exports `ReactRouterVite.devMiddleware`, for development.
+  `RouteEffectFailures`.
+- `react-router-effect/vite` exports `ReactRouterVite.devMiddleware`, for development. It needs
+  `@effect/platform-node`.
 
 ## Development
 

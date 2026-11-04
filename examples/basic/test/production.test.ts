@@ -99,7 +99,7 @@ describe("single fetch", () => {
     expect(await response.text()).toContain("is already on the list");
   });
 
-  it("returns action data with the request's metadata, and every cookie", async () => {
+  it("returns action data with the request's metadata, and both cookies", async () => {
     const response = await submit("/todos", { title: "Ship it" }, { "x-request-id": "req-7" });
     expect(response.status).toBe(200);
     const body = await response.text();
