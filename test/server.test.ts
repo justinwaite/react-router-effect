@@ -1,7 +1,7 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
+import { Context, Data, Effect, Layer, Logger, ManagedRuntime } from "effect";
 import {
   Headers as HttpHeaders,
   HttpMiddleware,
@@ -607,5 +607,85 @@ describe("responses", () => {
     expect(await response.json()).toEqual({ slow: true });
     expect(signals.get("finished")?.aborted).toBe(false);
     expect(interrupted.has("finished")).toBe(false);
+  });
+});
+
+describe("adapter errors", () => {
+  /** What the app's loggers received: each log's level and its message parts. */
+  const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> = [];
+  const capture = Logger.make(({ logLevel, message }) => {
+    logs.push({ level: logLevel, message: Array.isArray(message) ? message : [message] });
+  });
+
+  /** Starts an app made with `make`, with the capturing logger, and `HttpMiddleware.logger` when asked. */
+  const start = async (
+    make: Effect.Effect<ReactRouterHttp.App<ReactRouterHttp.Options>>,
+    withLoggerMiddleware = false,
+  ) => {
+    const runtime = ManagedRuntime.make(
+      Layer.unwrap(
+        Effect.map(make, (served) =>
+          withLoggerMiddleware
+            ? HttpServer.serve(served, HttpMiddleware.logger)
+            : HttpServer.serve(served),
+        ),
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+        Layer.provide(Logger.layer([capture])),
+      ),
+    );
+    const server = await runtime.runPromise(HttpServer.HttpServer);
+    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
+  };
+
+  const throwingContext = ReactRouterHttp.make({
+    build,
+    factory: routeFactory,
+    mode: "test",
+    requestContext: () => {
+      throw new Error("request context failed");
+    },
+  });
+
+  /** The error a log's message carries, if any. */
+  const errorOf = (log: (typeof logs)[number]) => log.message.find((part) => part instanceof Error);
+
+  it("logs a requestContext that throws through the app's loggers, and answers 500", async () => {
+    const served = await start(throwingContext);
+    logs.length = 0;
+    const response = await fetch(`${served.origin}/promise-loader`);
+    await served.stop();
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(logs.map((log) => log.level)).toEqual(["Error"]);
+    expect(errorOf(logs[0]!)?.message).toBe("request context failed");
+  });
+
+  it("logs the error once with a logger middleware, which logs the 500 it sent", async () => {
+    const served = await start(throwingContext, true);
+    logs.length = 0;
+    const response = await fetch(`${served.origin}/promise-loader`);
+    await served.stop();
+    expect(response.status).toBe(500);
+    expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
+      ["Error", "React Router adapter failed"],
+      ["Info", "Sent HTTP response"],
+    ]);
+  });
+
+  it("logs a development build that does not load, and answers 500", async () => {
+    const served = await start(
+      ReactRouterHttp.make({
+        build: () => Promise.reject(new Error("build failed")),
+        factory: routeFactory,
+        mode: "development",
+      }),
+    );
+    logs.length = 0;
+    const response = await fetch(`${served.origin}/promise-loader`);
+    await served.stop();
+    expect(response.status).toBe(500);
+    expect(errorOf(logs[0]!)?.message).toBe("build failed");
   });
 });

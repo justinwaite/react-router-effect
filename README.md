@@ -349,6 +349,10 @@ headers it trusts in its own middleware, with `request.modify` or `HttpMiddlewar
 The request signal aborts only if the response ends early. That happens when the client leaves while
 React Router runs, or while the body streams. A completed response never aborts it.
 
+React Router logs and answers the errors of route code. If the adapter's own steps fail, for example
+a `requestContext` that throws, the adapter logs the error with `Effect.logError` and answers 500.
+The log goes to the loggers of the app's Effect runtime.
+
 ### Development with Vite
 
 In development Vite serves the client. `react-router-effect/vite` runs Vite's middleware in front of

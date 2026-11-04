@@ -633,4 +633,15 @@ const serve = (
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
     return toHttpResponse(response, controller);
-  });
+  }).pipe(
+    // React Router logs and answers the errors of route code. A defect of the
+    // adapter's own steps, such as a `requestContext` that throws, a build
+    // that does not load, or React Router's handler rejecting, goes to the
+    // app's loggers, and the client gets a 500, as Express's error handler
+    // does. Answering it keeps a logger middleware from logging it again.
+    Effect.catchDefect((defect) =>
+      Effect.logError("React Router adapter failed", defect).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 500 })),
+      ),
+    ),
+  );
