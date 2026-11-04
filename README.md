@@ -84,7 +84,7 @@ export const reactRouterApp = ReactRouterHttp.make({
 ### 3. Serve it
 
 The server makes the app once, when it starts, and serves it with its own Effect HTTP server and its
-own middleware. In production, making the app loads the build and lists the client build. If the
+own middleware. In production, making the app loads the build and reads the client build. If the
 server cannot read the client build, it fails to start, and the error names the resolved directory.
 
 ```ts
@@ -332,9 +332,12 @@ The options:
 - `requestContext: (request) => Context` builds the request's services before React Router runs.
 - `clientAssets: true` serves the client build, `build.assetsBuildDirectory` under
   `build.publicPath`, before React Router. Files under `assets/` use a content hash in their name,
-  and the adapter caches them for a year as immutable. It caches other files for an hour. The
-  adapter lists the files once, when the app is made, so it serves only a build that it loads once:
-  in production mode, or a build value. It never serves a development build, where Vite serves the
+  and the adapter caches them for a year as immutable. It caches other files for an hour. It serves
+  the files as `express.static` does. A directory serves its index file, such as a prerendered page.
+  A directory path without the trailing slash redirects to the path with it. It does not serve
+  dotfiles, and a request it does not serve goes to React Router. Like `express.static`, it looks up
+  each GET and HEAD request in the file system. It serves only a build that it loads once: in
+  production mode, or a build value. It never serves a development build, where Vite serves the
   client. `assetsBuildDirectory` is relative to the working directory of the server. If the adapter
   cannot read it, making the app fails with a `ClientBuildError` that names the resolved directory.
   It needs the platform's file system, which `NodeHttpServer.layer` provides.

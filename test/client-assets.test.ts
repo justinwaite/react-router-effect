@@ -19,6 +19,9 @@ mkdirSync(join(directory, "nested"));
 mkdirSync(join(directory, ".vite"));
 writeFileSync(join(directory, "assets", "entry-abc123.js"), "export {};");
 writeFileSync(join(directory, "favicon.svg"), "<svg />");
+// React Router writes a prerendered page to the index.html of its path's directory.
+mkdirSync(join(directory, "prerendered"));
+writeFileSync(join(directory, "prerendered", "index.html"), "<p>prerendered</p>");
 writeFileSync(join(directory, ".vite", "manifest.json"), "{}");
 writeFileSync(join(directory, "read me.txt"), "spaced");
 
@@ -158,7 +161,9 @@ describe("client assets", () => {
 
   it.each([
     ["a missing file", "/assets/missing.js", "GET", "router /assets/missing.js"],
-    ["a directory", "/nested", "GET", "router /nested"],
+    ["a directory without an index file", "/nested/", "GET", "router /nested/"],
+    // The root route answers `/` with the document.
+    ["the root without an index file", "/", "GET", "document"],
     ["a dotfile", "/.vite/manifest.json", "GET", "router /.vite/manifest.json"],
     ["an encoded dotfile", "/%2evite/manifest.json", "GET", "router /%2evite/manifest.json"],
     ["a POST", "/favicon.svg", "POST", "router action"],
@@ -168,6 +173,49 @@ describe("client assets", () => {
       headers: { origin: served.origin },
     });
     expect(await response.text()).toBe(expected);
+  });
+
+  it("serves a directory's index file, such as a prerendered page, as express.static does", async () => {
+    const response = await fetch(`${served.origin}/prerendered/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(await response.text()).toBe("<p>prerendered</p>");
+  });
+
+  it("redirects a directory path without its trailing slash, as express.static does", async () => {
+    const page = await fetch(`${served.origin}/prerendered?x=1`, { redirect: "manual" });
+    expect(page.status).toBe(301);
+    expect(page.headers.get("location")).toBe("/prerendered/?x=1");
+    const empty = await fetch(`${served.origin}/nested`, { redirect: "manual" });
+    expect(empty.status).toBe(301);
+    expect(empty.headers.get("location")).toBe("/nested/");
+    const prefixed = await fetch(`${underPrefix.origin}/static/prerendered`, {
+      redirect: "manual",
+    });
+    expect(prefixed.headers.get("location")).toBe("/static/prerendered/");
+  });
+
+  it("serves the root's index file, such as a prerendered home page", async () => {
+    const root = mkdtempSync(join(tmpdir(), "client-assets-root-"));
+    writeFileSync(join(root, "index.html"), "<p>home</p>");
+    const app = await start(
+      ReactRouterHttp.make({
+        build: makeBuild({ assetsBuildDirectory: root }),
+        factory: routeFactory,
+        mode: "production",
+        clientAssets: true,
+      }),
+    );
+    const response = await fetch(`${app.origin}/`);
+    await app.stop();
+    rmSync(root, { recursive: true, force: true });
+    expect(await response.text()).toBe("<p>home</p>");
+  });
+
+  it("serves a file added after the server started, as express.static does", async () => {
+    writeFileSync(join(directory, "late.txt"), "late");
+    expect(await (await fetch(`${served.origin}/late.txt`)).text()).toBe("late");
   });
 
   it("serves a file whose name the URL encodes", async () => {

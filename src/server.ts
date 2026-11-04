@@ -73,8 +73,12 @@ export interface Options {
    * Serves the client build before React Router: the files of the build's
    * `assetsBuildDirectory`, under its `publicPath`. Files under `assets/` have
    * hashed names and are cached for a year as immutable, other files for an
-   * hour. The app lists the files once, when it is made, so it serves only a
-   * build that it loads once: in production mode, or a build value. A
+   * hour. It serves like `express.static`: a directory serves its index file,
+   * such as a prerendered page, its path without the trailing slash redirects
+   * to the path with it, dotfiles are not served, and a request it does not
+   * serve goes to React Router. Like `express.static`, it looks each GET and
+   * HEAD request up in the file system. It serves only a build that it loads
+   * once: in production mode, or a build value. A
    * development build is never served, since Vite serves the client there, nor
    * is a `publicPath` on another origin. Making the app fails with a
    * {@link ClientBuildError} when it cannot read the directory. Needs the
@@ -154,17 +158,15 @@ type StaticFiles = Effect.Effect<
 interface ClientFiles {
   /** The `publicPath` without its trailing slash. */
   readonly prefix: string;
-  /**
-   * The paths in the client build, files and directories, from its root, such
-   * as `/assets/entry.js`. Paths with a dot segment, such as `.vite/`, are left
-   * out: Effect's static server serves dotfiles, and Vite writes its manifest there.
-   */
-  readonly paths: ReadonlySet<string>;
   readonly hashed: StaticFiles;
   readonly other: StaticFiles;
 }
 
-/** True for a path with a segment that starts with a dot, such as `.vite/`, which is never served. */
+/**
+ * True for a path with a segment that starts with a dot, such as `.vite/`,
+ * which is never served. Effect's static server serves dotfiles, and Vite
+ * writes its manifest there. `express.static` ignores them.
+ */
 const hasDotSegment = (path: string): boolean =>
   path.split("/").some((segment) => segment.startsWith("."));
 
@@ -186,9 +188,8 @@ export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
 
 /**
  * The client files of a build, or `undefined` when the adapter does not serve
- * them. A production client build does not change, so its paths are listed
- * once, when the app is made, and a request for any other path goes to React
- * Router without a file system lookup.
+ * them. Making them reads the build's directory, so a missing client build
+ * fails the server's start and not its requests.
  */
 const makeClientFiles = (
   build: ServerBuild,
@@ -198,7 +199,7 @@ const makeClientFiles = (
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.resolve(build.assetsBuildDirectory);
-    const entries = yield* fileSystem.readDirectory(root, { recursive: true }).pipe(
+    yield* fileSystem.readDirectory(root).pipe(
       Effect.mapError(
         (cause) =>
           new ClientBuildError({
@@ -209,18 +210,12 @@ const makeClientFiles = (
       ),
     );
     const files = (cacheControl: string) =>
-      HttpStaticServer.make({ root, index: undefined, cacheControl }).pipe(
+      HttpStaticServer.make({ root, cacheControl }).pipe(
         // Making a static server only resolves its root.
         Effect.orDie,
       );
-    // Only listed paths are served, so leaving dotfiles out of the list is the whole dotfile rule:
-    // a request is looked up by its decoded path, so an encoded dot such as `%2e` finds nothing either.
-    const paths = entries
-      .map((entry) => `/${entry.split(path.sep).join("/")}`)
-      .filter((entry) => !hasDotSegment(entry));
     return {
       prefix: build.publicPath.replace(/\/$/, ""),
-      paths: new Set(paths),
       hashed: yield* files(hashedCacheControl),
       other: yield* files(otherCacheControl),
     };
@@ -237,8 +232,9 @@ const decodePath = (path: string): string | undefined => {
 
 /**
  * Serves the request from the client build, or returns `None` when the build
- * has no such file: a path the build does not have, a directory, a dotfile, a
- * path outside the `publicPath`, or a method other than GET and HEAD.
+ * has no such file: a path the build does not have, a directory without an
+ * index file, a dotfile, a path outside the `publicPath`, or a method other
+ * than GET and HEAD.
  */
 const serveClientFile = (
   files: ClientFiles,
@@ -256,7 +252,8 @@ const serveClientFile = (
   }
   const url = request.url.slice(files.prefix.length);
   const file = decodePath(url.split("?")[0] ?? "");
-  if (file === undefined || !files.paths.has(file)) return Effect.succeedNone;
+  // The decoded path, so an encoded dot such as `%2e` is a dotfile too.
+  if (file === undefined || hasDotSegment(file)) return Effect.succeedNone;
   const serve = url.startsWith("/assets/") ? files.hashed : files.other;
   return serve.pipe(
     Effect.provideService(HttpServerRequest.HttpServerRequest, request.modify({ url })),
@@ -554,7 +551,7 @@ export type App<O extends Options> = Effect.Effect<
 /**
  * Makes the Effect HTTP app that serves React Router. Run the Effect once,
  * when the server starts. In production it loads the build, and with
- * `clientAssets` it lists the client build, so a missing client build fails
+ * `clientAssets` it reads the client build's directory, so a missing one fails
  * the server's start with a {@link ClientBuildError} and not its requests.
  *
  * ```ts
