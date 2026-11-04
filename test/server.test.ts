@@ -159,6 +159,10 @@ const routes = {
       );
     },
   }),
+  untyped: route("untyped", "untyped", {
+    // A stream body gives the Web response no content type.
+    loader: () => new Response(new Blob(["<p>hi</p>"]).stream()),
+  }),
   cookies: route("cookies", "cookies", {
     loader: async ({ request }: { readonly request: Request }) => {
       const headers = new Headers();
@@ -431,6 +435,12 @@ describe("responses", () => {
   it("writes every Set-Cookie value", async () => {
     const response = await fetch(`${origin}/cookies?case=distinct`);
     expect(response.headers.getSetCookie()).toEqual(await cookieValues("distinct"));
+  });
+
+  it("sends application/octet-stream for a body without a content type, as Effect does", async () => {
+    const response = await fetch(`${origin}/untyped`);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(await response.text()).toBe("<p>hi</p>");
   });
 
   it("keeps the last of two cookies that share a name, as Effect does", async () => {

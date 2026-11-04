@@ -104,6 +104,9 @@ export interface Options {
  * middleware after the adapter can read and change them. Effect keeps one
  * cookie per name, the last one, and only the attributes it knows.
  *
+ * Effect gives a streamed body without a content type
+ * `application/octet-stream`, so a route that sends a body sets its own.
+ *
  * When the body stream ends before it finished, because the client left or a
  * write failed, the request signal aborts: React Router then stops streamed
  * promises, and route code sees the abort. A completed response never aborts it.

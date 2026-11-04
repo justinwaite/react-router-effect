@@ -386,6 +386,19 @@ Effect keeps one cookie per name and only the attributes it knows: `Max-Age`, `D
 same cookie name twice, for example to expire it on one path and set it on another, only the last
 one is sent.
 
+### Content type
+
+Effect gives a streamed body without a content type `application/octet-stream`. A resource route
+that returns such a body sends that type, and the browser downloads the response. Examples are a
+`ReadableStream`, bytes, or the body of another service's response. With Express, the response has
+no content type, and the browser guesses one. Set `Content-Type` in the route:
+
+```ts
+return new Response(Readable.toWeb(file) as ReadableStream, {
+  headers: { "content-type": "application/pdf" },
+});
+```
+
 ### Tracing
 
 When the request has a server span, the adapter traces React Router. The span comes from
