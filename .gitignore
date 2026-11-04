@@ -6,3 +6,5 @@ dist
 # Vitest browser-mode debug artifacts (written only on failure)
 .vitest/attachments/
 **/__screenshots__/
+
+.idea
