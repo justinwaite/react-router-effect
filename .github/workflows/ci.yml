@@ -57,14 +57,21 @@ jobs:
             vp exec playwright install --with-deps chromium
           fi
 
+      # The example imports the package through its built exports, so build it
+      # before the type check.
+      - name: Build (pack)
+        run: vp pack
+
+      # The example's routes import the types React Router generates.
+      - name: Generate the example's route types
+        working-directory: examples/basic
+        run: vp exec react-router typegen
+
       - name: Format, lint & type check
         run: vp check
 
       - name: Test
         run: vp test run
-
-      - name: Build (pack)
-        run: vp pack
 
       - name: Type check the built package as a consumer
         run: vp run check:consumer
