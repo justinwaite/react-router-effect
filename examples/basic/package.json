@@ -24,8 +24,8 @@
     "react-router-effect": "workspace:*"
   },
   "devDependencies": {
-    "@react-router/dev": "8.4.0",
-    "@react-router/express": "8.4.0",
+    "@react-router/dev": "8.5.1",
+    "@react-router/express": "8.5.1",
     "@types/autocannon": "^7.12.7",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.2",
