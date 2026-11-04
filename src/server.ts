@@ -503,6 +503,9 @@ const makeBuildLoader = (
  * Effect tracer sets, sees the request's. When the request fiber is
  * interrupted, because the client left, the request signal aborts, and a
  * response that React Router resolves afterwards has its body cancelled.
+ *
+ * Effect's HTTP server runs the app uninterruptible, and interrupts the fiber
+ * only where the app opts in, so the call is interruptible.
  */
 const callRouter = (
   handler: RequestHandler,
@@ -528,7 +531,7 @@ const callRouter = (
       interrupted = true;
       controller.abort();
     });
-  });
+  }).pipe(Effect.interruptible);
 
 /** True when the options serve the client build. */
 type ServesClientAssets<O> = O extends { readonly clientAssets: infer Serves }

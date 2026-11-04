@@ -39,8 +39,11 @@ const routeFactory = makeEffectRouteFactory<FormError | UnhandledError>()((Respo
 const { Respond } = routeFactory;
 const store = routeFactory.handlers.requestContext;
 
-/** The request signals the stream route saw, by the `id` query parameter. */
+/** The request signals the stream and slow routes saw, by the `id` query parameter. */
 const signals = new Map<string, AbortSignal>();
+
+/** The `id` query parameters of the slow loaders that were interrupted. */
+const interrupted = new Set<string>();
 
 /** Waits for `ms` milliseconds. */
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -145,6 +148,16 @@ const routes = {
   stream: route("stream", "stream", {
     loader: ({ request }: { readonly request: Request }) =>
       new Response(streamingBody(request), { headers: { "content-type": "text/event-stream" } }),
+  }),
+  slow: route("slow", "slow", {
+    loader: ({ request }: { readonly request: Request }) => {
+      const id = new URL(request.url).searchParams.get("id") ?? "";
+      signals.set(id, request.signal);
+      return Effect.sleep("300 millis").pipe(
+        Effect.as(Response.json({ slow: true })),
+        Effect.onInterrupt(() => Effect.sync(() => interrupted.add(id))),
+      );
+    },
   }),
   cookies: route("cookies", "cookies", {
     loader: async ({ request }: { readonly request: Request }) => {
@@ -576,5 +589,23 @@ describe("responses", () => {
     controller.abort();
     await sleep(100);
     expect(signals.get("abandoned")?.aborted).toBe(true);
+  });
+
+  it("aborts the request signal and interrupts the loader when the client leaves while it runs", async () => {
+    const controller = new AbortController();
+    const response = fetch(`${origin}/slow?id=left`, { signal: controller.signal });
+    await sleep(50);
+    controller.abort();
+    await expect(response).rejects.toThrow();
+    await sleep(50);
+    expect(signals.get("left")?.aborted).toBe(true);
+    expect(interrupted.has("left")).toBe(true);
+  });
+
+  it("neither aborts nor interrupts a loader that finishes", async () => {
+    const response = await fetch(`${origin}/slow?id=finished`);
+    expect(await response.json()).toEqual({ slow: true });
+    expect(signals.get("finished")?.aborted).toBe(false);
+    expect(interrupted.has("finished")).toBe(false);
   });
 });
