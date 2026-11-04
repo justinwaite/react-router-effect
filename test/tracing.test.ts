@@ -124,7 +124,7 @@ let origin = "";
 
 beforeAll(async () => {
   runtime = ManagedRuntime.make(
-    HttpServer.serve(app).pipe(
+    Layer.unwrap(Effect.map(app, (served) => HttpServer.serve(served))).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
       Layer.provide(Layer.succeed(Tracer.Tracer)(recordingTracer)),
       // Records the `set-cookie` response header on the server span, which is opt-in.

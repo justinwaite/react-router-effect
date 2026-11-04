@@ -38,14 +38,19 @@ const middleware = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
 const developmentApp = (vite: ViteDevServer) =>
   Effect.promise(() => vite.ssrLoadModule("./server/app.ts")).pipe(
     Effect.flatMap((module) => (module as typeof import("./app")).reactRouterApp),
+    Effect.flatten,
     ReactRouterVite.devMiddleware(vite),
   );
 
-/** The server, as a layer. Tests and `main` launch it. */
+/**
+ * The server, as a layer. Tests and `main` launch it. In production the app
+ * is made once, when the server starts, so a missing client build fails the start.
+ */
 export const ServerLive = (options: MainOptions) =>
-  HttpServer.serve(
-    options.vite === undefined ? reactRouterApp : developmentApp(options.vite),
-    middleware,
+  Layer.unwrap(
+    options.vite === undefined
+      ? Effect.map(reactRouterApp, (app) => HttpServer.serve(app, middleware))
+      : Effect.succeed(HttpServer.serve(developmentApp(options.vite), middleware)),
   ).pipe(
     HttpServer.withLogAddress,
     Layer.provide(NodeHttpServer.layer(() => Http.createServer(), { port: options.port })),

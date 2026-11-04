@@ -65,7 +65,8 @@ export const { Respond } = routeFactory;
 
 ### 2. Create the server app
 
-`ReactRouterHttp.make` returns an Effect HTTP app. It runs React Router with your route factory.
+`ReactRouterHttp.make` returns an Effect that makes an Effect HTTP app. The app runs React Router
+with your route factory.
 
 ```ts
 // server/app.ts
@@ -82,19 +83,23 @@ export const reactRouterApp = ReactRouterHttp.make({
 
 ### 3. Serve it
 
-The app serves `reactRouterApp` with its own Effect HTTP server and its own middleware.
+The server makes the app once, when it starts, and serves it with its own Effect HTTP server and its
+own middleware. In production, making the app loads the build and lists the client build. If the
+server cannot read the client build, it fails to start, and the error names the resolved directory.
 
 ```ts
 // server/main.ts
 import { createServer } from "node:http";
 
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { HttpMiddleware, HttpServer } from "effect/http";
 
 import { reactRouterApp } from "./app";
 
-HttpServer.serve(reactRouterApp, HttpMiddleware.logger).pipe(
+Layer.unwrap(
+  Effect.map(reactRouterApp, (app) => HttpServer.serve(app, HttpMiddleware.logger)),
+).pipe(
   Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
   Layer.launch,
   NodeRuntime.runMain,
@@ -328,8 +333,11 @@ The options:
 - `clientAssets: true` serves the client build, `build.assetsBuildDirectory` under
   `build.publicPath`, before React Router. Files under `assets/` use a content hash in their name,
   and the adapter caches them for a year as immutable. It caches other files for an hour. The
-  adapter never serves a development build, where Vite serves the client. It needs the platform's
-  file system, which `NodeHttpServer.layer` provides.
+  adapter lists the files once, when the app is made, so it serves only a build that it loads once:
+  in production mode, or a build value. It never serves a development build, where Vite serves the
+  client. `assetsBuildDirectory` is relative to the working directory of the server. If the adapter
+  cannot read it, making the app fails with a `ClientBuildError` that names the resolved directory.
+  It needs the platform's file system, which `NodeHttpServer.layer` provides.
 - `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. In production the
   adapter loads the build once.
 
@@ -350,10 +358,11 @@ the app, on Effect's Node HTTP server:
 import { ReactRouterVite } from "react-router-effect/vite";
 
 const vite = await createServer({ server: { middlewareMode: true } });
-HttpServer.serve(reactRouterApp.pipe(ReactRouterVite.devMiddleware(vite)));
+HttpServer.serve(Effect.flatten(reactRouterApp).pipe(ReactRouterVite.devMiddleware(vite)));
 ```
 
-Load the module that calls `ReactRouterHttp.make` through `vite.ssrLoadModule`. Then the route
+In development, making the app does nothing but return it, so the server can make it for each
+request. Load the module that calls `ReactRouterHttp.make` through `vite.ssrLoadModule`. Then the route
 modules, the factory and the adapter share Vite's module graph. The example's `server.js` and
 `server/main.ts` do this.
 

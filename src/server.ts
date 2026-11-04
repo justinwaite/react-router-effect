@@ -25,6 +25,7 @@
 import {
   Cause,
   Context,
+  Data,
   Effect,
   Exit,
   FileSystem,
@@ -72,9 +73,13 @@ export interface Options {
    * Serves the client build before React Router: the files of the build's
    * `assetsBuildDirectory`, under its `publicPath`. Files under `assets/` have
    * hashed names and are cached for a year as immutable, other files for an
-   * hour. A development build is never served, since Vite serves the client
-   * there, nor is a `publicPath` on another origin. Needs the platform's file
-   * system, which `NodeHttpServer.layer` and the other server layers provide.
+   * hour. The app lists the files once, when it is made, so it serves only a
+   * build that it loads once: in production mode, or a build value. A
+   * development build is never served, since Vite serves the client there, nor
+   * is a `publicPath` on another origin. Making the app fails with a
+   * {@link ClientBuildError} when it cannot read the directory. Needs the
+   * platform's file system, which `NodeHttpServer.layer` and the other server
+   * layers provide.
    */
   readonly clientAssets?: boolean | undefined;
   /**
@@ -168,23 +173,41 @@ const isNotFound = (error: HttpServerError.HttpServerError): boolean =>
   error.reason._tag === "RouteNotFound";
 
 /**
+ * The app serves the client build, and cannot read its directory. The
+ * build's `assetsBuildDirectory` is relative to the working directory of the
+ * server, so `directory` is the path it resolved to.
+ */
+export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
+  readonly message: string;
+  /** The resolved directory of the client build. */
+  readonly directory: string;
+  readonly cause: unknown;
+}> {}
+
+/**
  * The client files of a build, or `undefined` when the adapter does not serve
  * them. A production client build does not change, so its paths are listed
- * once, and a request for any other path goes to React Router without a file
- * system lookup.
+ * once, when the app is made, and a request for any other path goes to React
+ * Router without a file system lookup.
  */
 const makeClientFiles = (
   build: ServerBuild,
-): Effect.Effect<ClientFiles | undefined, never, ClientAssetServices> =>
+): Effect.Effect<ClientFiles | undefined, ClientBuildError, ClientAssetServices> =>
   Effect.gen(function* () {
     if (build.assets.hmr !== undefined || !build.publicPath.startsWith("/")) return undefined;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = build.assetsBuildDirectory;
-    // A missing client build serves nothing.
-    const entries = yield* fileSystem
-      .readDirectory(root, { recursive: true })
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const root = path.resolve(build.assetsBuildDirectory);
+    const entries = yield* fileSystem.readDirectory(root, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ClientBuildError({
+            message: `Cannot read the client build at ${root}`,
+            directory: root,
+            cause,
+          }),
+      ),
+    );
     const files = (cacheControl: string) =>
       HttpStaticServer.make({ root, index: undefined, cacheControl }).pipe(
         // Making a static server only resolves its root.
@@ -446,18 +469,19 @@ interface LoadedBuild {
 }
 
 /**
- * Loads the build and returns React Router's request handler for it, as a
- * value once it is known not to change. The handler is built once per build
- * value: React Router rebuilds its route tables on every request when it is
- * given a function, so the adapter resolves the build itself. In development
- * a new build after a change gets a new handler. In production the build
- * cannot change, so the adapter loads it once.
+ * Loads the build and returns React Router's request handler for it. The
+ * handler is built once per build value: React Router rebuilds its route
+ * tables on every request when it is given a function, so the adapter
+ * resolves the build itself. In development a new build after a change gets a
+ * new handler. The last handler is kept across runs of {@link make}'s Effect,
+ * since a development server can make the app for each request.
  */
-const makeBuildSource = (options: Options): Effect.Effect<LoadedBuild> => {
+const makeBuildLoader = (
+  options: Options,
+  mode: string | undefined,
+): Effect.Effect<LoadedBuild> => {
   let cached: LoadedBuild | undefined;
-  const mode = options.mode ?? process.env.NODE_ENV;
-  const settled = typeof options.build !== "function" || mode === "production";
-  const load = async (): Promise<LoadedBuild> => {
+  return Effect.promise(async () => {
     const build = typeof options.build === "function" ? await options.build() : options.build;
     if (cached?.build !== build) {
       cached = {
@@ -466,10 +490,7 @@ const makeBuildSource = (options: Options): Effect.Effect<LoadedBuild> => {
       };
     }
     return cached;
-  };
-  return Effect.suspend(() =>
-    settled && cached !== undefined ? Effect.succeed(cached) : Effect.promise(load),
-  );
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -517,20 +538,21 @@ type ServesClientAssets<O> = O extends { readonly clientAssets: infer Serves }
   : false;
 
 /**
- * The Effect HTTP app {@link make} returns. Serving the client build adds the
- * platform's file system to its requirements, and the static file server's
- * errors to its errors.
+ * The Effect HTTP app {@link make} makes. Serving the client build adds the
+ * static file server's errors to its errors.
  */
 export type App<O extends Options> = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   | HttpServerError.RequestError
   | (ServesClientAssets<O> extends true ? HttpServerError.HttpServerError : never),
-  | HttpServerRequest.HttpServerRequest
-  | (ServesClientAssets<O> extends true ? ClientAssetServices : never)
+  HttpServerRequest.HttpServerRequest
 >;
 
 /**
- * Serves React Router from the Effect HTTP server.
+ * Makes the Effect HTTP app that serves React Router. Run the Effect once,
+ * when the server starts. In production it loads the build, and with
+ * `clientAssets` it lists the client build, so a missing client build fails
+ * the server's start with a {@link ClientBuildError} and not its requests.
  *
  * ```ts
  * import { ReactRouterHttp } from "react-router-effect/server";
@@ -542,33 +564,59 @@ export type App<O extends Options> = Effect.Effect<
  * });
  *
  * // Serve it like any Effect HTTP app, with the app's own middleware.
- * HttpServer.serve(reactRouterApp, HttpMiddleware.logger);
+ * Layer.unwrap(
+ *   Effect.map(reactRouterApp, (app) => HttpServer.serve(app, HttpMiddleware.logger)),
+ * );
  * ```
+ *
+ * In development, where the build changes, the app loads the build for each
+ * request, and making it does nothing else.
  *
  * The request signal aborts only when the response ends early: when the
  * client leaves while React Router runs or while the body streams. A
  * completed response never aborts it.
  */
-export const make = <const O extends Options>(options: O): App<O> => {
-  const loadBuild = makeBuildSource(options);
-  let clientFiles:
-    | { readonly build: ServerBuild; readonly files: ClientFiles | undefined }
-    | undefined;
-  const clientFilesOf = (build: ServerBuild) =>
-    clientFiles?.build === build
-      ? Effect.succeed(clientFiles.files)
-      : Effect.map(makeClientFiles(build), (files) => {
-          clientFiles = { build, files };
-          return files;
-        });
-  const app = Effect.gen(function* () {
+export const make = <const O extends Options>(
+  options: O,
+): Effect.Effect<
+  App<O>,
+  ServesClientAssets<O> extends true ? ClientBuildError : never,
+  ServesClientAssets<O> extends true ? ClientAssetServices : never
+> => {
+  const mode = options.mode ?? process.env.NODE_ENV;
+  const loadBuild = makeBuildLoader(options, mode);
+  const settled = typeof options.build !== "function" || mode === "production";
+  const made = Effect.gen(function* () {
+    if (!settled) return serve(options, loadBuild, undefined);
+    const loaded = yield* loadBuild;
+    const files = options.clientAssets === true ? yield* makeClientFiles(loaded.build) : undefined;
+    return serve(options, Effect.succeed(loaded), files);
+  });
+  // The client build's errors and requirements apply only when the options serve it.
+  return made as unknown as Effect.Effect<
+    App<O>,
+    ServesClientAssets<O> extends true ? ClientBuildError : never,
+    ServesClientAssets<O> extends true ? ClientAssetServices : never
+  >;
+};
+
+/** The app for one loaded build source, and the client files it serves, if any. */
+const serve = (
+  options: Options,
+  loadBuild: Effect.Effect<LoadedBuild>,
+  files: ClientFiles | undefined,
+): Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  HttpServerError.RequestError | HttpServerError.HttpServerError,
+  HttpServerRequest.HttpServerRequest
+> =>
+  Effect.gen(function* () {
     const httpRequest = yield* HttpServerRequest.HttpServerRequest;
-    const { build, handler } = yield* loadBuild;
-    if (options.clientAssets === true) {
-      const files = yield* clientFilesOf(build);
-      const file = files === undefined ? Option.none() : yield* serveClientFile(files, httpRequest);
+    if (files !== undefined) {
+      const file = yield* serveClientFile(files, httpRequest);
       if (Option.isSome(file)) return file.value;
     }
+    const { handler } = yield* loadBuild;
     // Route effects get the request fiber's context, without its scope: a
     // route that needs a scope opens its own with `Effect.scoped`.
     const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
@@ -583,6 +631,3 @@ export const make = <const O extends Options>(options: O): App<O> => {
     const response = yield* callRouter(handler, request, routerContext, controller);
     return toHttpResponse(response, controller);
   });
-  // The client build's requirements apply only when the options serve it.
-  return app as unknown as App<O>;
-};

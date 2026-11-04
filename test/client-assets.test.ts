@@ -60,16 +60,20 @@ const makeBuild = (overrides: Partial<ServerBuild> = {}): ServerBuild => {
   };
 };
 
-/** Starts an app on a free port; returns its origin and a function that stops it. */
+/** Makes an app and starts it on a free port; returns its origin and a function that stops it. */
 const start = async (
-  app: Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
+  make: Effect.Effect<
+    Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      unknown,
+      HttpServerRequest.HttpServerRequest
+    >,
     unknown,
-    HttpServerRequest.HttpServerRequest | ReactRouterHttp.ClientAssetServices
+    ReactRouterHttp.ClientAssetServices
   >,
 ) => {
   const runtime = ManagedRuntime.make(
-    HttpServer.serve(app).pipe(
+    Layer.unwrap(Effect.map(make, (app) => HttpServer.serve(app))).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
     ),
   );
@@ -182,6 +186,20 @@ describe("client assets", () => {
     const response = await fetch(`${development.origin}/assets/entry-abc123.js`);
     expect(await response.text()).toBe("router /assets/entry-abc123.js");
   });
+
+  it("fails the server's start when it cannot read the client build, with the resolved directory", async () => {
+    const make = ReactRouterHttp.make({
+      build: makeBuild({ assetsBuildDirectory: "missing/client" }),
+      factory: routeFactory,
+      mode: "production",
+      clientAssets: true,
+    });
+    await expect(start(make)).rejects.toMatchObject({
+      _tag: "ClientBuildError",
+      directory: join(process.cwd(), "missing/client"),
+      message: `Cannot read the client build at ${join(process.cwd(), "missing/client")}`,
+    });
+  });
 });
 
 describe("build loading", () => {
@@ -230,7 +248,7 @@ describe("Vite dev middleware", () => {
   beforeAll(async () => {
     dev = await start(
       ReactRouterHttp.make({ build: makeBuild(), factory: routeFactory, mode: "development" }).pipe(
-        ReactRouterVite.devMiddleware(vite),
+        Effect.map(ReactRouterVite.devMiddleware(vite)),
       ),
     );
   });

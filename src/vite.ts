@@ -64,7 +64,7 @@ const passThroughVite = (
  * import { ReactRouterVite } from "react-router-effect/vite";
  *
  * const vite = await createServer({ server: { middlewareMode: true } });
- * HttpServer.serve(reactRouterApp.pipe(ReactRouterVite.devMiddleware(vite)));
+ * HttpServer.serve(Effect.flatten(reactRouterApp).pipe(ReactRouterVite.devMiddleware(vite)));
  * ```
  *
  * A request Vite answers gets an empty `HttpServerResponse`, which Effect's

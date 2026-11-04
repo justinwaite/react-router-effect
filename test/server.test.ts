@@ -289,9 +289,10 @@ const outerResponse = HttpMiddleware.make((httpApp) =>
   }),
 );
 
-const ServerLive = HttpServer.serve(
-  proxyHeaders(outerResponse(app)),
-  HttpMiddleware.compression(),
+const ServerLive = Layer.unwrap(
+  Effect.map(app, (served) =>
+    HttpServer.serve(proxyHeaders(outerResponse(served)), HttpMiddleware.compression()),
+  ),
 ).pipe(Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })));
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;

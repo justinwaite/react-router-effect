@@ -13,7 +13,7 @@ import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createRequestListener } from "@react-router/node";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/http";
 import { afterAll, expect, test } from "vite-plus/test";
 
@@ -27,7 +27,7 @@ const server = await loadServer();
 
 /** The adapter on Effect's Node HTTP server, on a free port. */
 const adapterRuntime = ManagedRuntime.make(
-  HttpServer.serve(server.reactRouterApp).pipe(
+  Layer.unwrap(Effect.map(server.reactRouterApp, (app) => HttpServer.serve(app))).pipe(
     Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
   ),
 );

@@ -52,17 +52,21 @@ const expressWithStatic = () => {
   return app;
 };
 
-/** Serves an Effect HTTP app on Effect's Node HTTP server until SIGTERM. */
+/** Makes an Effect HTTP app and serves it on Effect's Node HTTP server until SIGTERM. */
 const serveEffect = (
-  app: Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
+  make: Effect.Effect<
+    Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      unknown,
+      HttpServerRequest.HttpServerRequest
+    >,
     unknown,
-    HttpServerRequest.HttpServerRequest | ReactRouterHttp.ClientAssetServices
+    ReactRouterHttp.ClientAssetServices
   >,
 ) =>
   NodeRuntime.runMain(
     Layer.launch(
-      HttpServer.serve(app).pipe(
+      Layer.unwrap(Effect.map(make, (app) => HttpServer.serve(app))).pipe(
         Layer.provide(NodeHttpServer.layer(() => Http.createServer(), { port: Number(port) })),
       ),
     ),
@@ -76,18 +80,22 @@ switch (kind) {
   case "effect-minimal": {
     const handler = createRouterHandler(await baselineBuild(server), "production");
     serveEffect(
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const web = yield* HttpServerRequest.toWeb(request);
-        const context = baselineContext(server, request.headers["x-request-id"]);
-        return HttpServerResponse.fromWeb(yield* Effect.promise(() => handler(web, context)));
-      }),
+      Effect.succeed(
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const web = yield* HttpServerRequest.toWeb(request);
+          const context = baselineContext(server, request.headers["x-request-id"]);
+          return HttpServerResponse.fromWeb(yield* Effect.promise(() => handler(web, context)));
+        }),
+      ),
     );
     break;
   }
   case "effect-floor": {
     serveEffect(
-      Effect.succeed(HttpServerResponse.text(floorBody, { contentType: "text/x-script" })),
+      Effect.succeed(
+        Effect.succeed(HttpServerResponse.text(floorBody, { contentType: "text/x-script" })),
+      ),
     );
     break;
   }
