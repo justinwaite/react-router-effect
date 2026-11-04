@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 /** The example's directory. */
@@ -30,7 +31,11 @@ export const freePort = () =>
 export interface ServerProcess {
   readonly origin: string;
   readonly output: () => string;
-  /** Sends SIGTERM and resolves with the exit code once the server exits. */
+  /**
+   * Sends SIGTERM and resolves with the exit code once the server exits. A
+   * server that is still running after 15 seconds is killed, and `stop` fails
+   * with its output, before the test's own timeout hides it.
+   */
   readonly stop: () => Promise<number | null>;
 }
 
@@ -66,9 +71,17 @@ export const startServer = async (
   return {
     origin,
     output: () => output,
-    stop: () => {
+    stop: async () => {
       child.kill("SIGTERM");
-      return exited;
+      const wait = new AbortController();
+      const stopped = await Promise.race([
+        exited.then((code) => ({ code })),
+        delay(15_000, undefined, { signal: wait.signal }).catch(() => undefined),
+      ]);
+      wait.abort();
+      if (stopped !== undefined) return stopped.code;
+      child.kill("SIGKILL");
+      throw new Error(`The server did not stop within 15 seconds of SIGTERM:\n${output}`);
     },
   };
 };
