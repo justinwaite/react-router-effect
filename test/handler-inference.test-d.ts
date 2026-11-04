@@ -6,9 +6,9 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // `errorHandlers` keys are constrained to the domain-error tags (so they
-// autocomplete), and each handler's `error` parameter is typed from its key —
+// autocomplete), and each handler's `error` parameter is typed from its key -
 // no annotation needed. (Precise recover types from un-annotated handlers are
-// covered comprehensively in loader-action-data.test-d.ts.)
+// covered in loader-action-data.test-d.ts.)
 // ---------------------------------------------------------------------------
 
 class FormError extends Data.TaggedError("FormError")<{ readonly reply: string }> {}
@@ -34,7 +34,7 @@ describe("handler params are inferred from their key", () => {
   it("rejects a handler keyed by a non-domain tag", () => {
     makeEffectRouteFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
-        // @ts-expect-error — NotADomainError is not one of the domain-error tags.
+        // @ts-expect-error - NotADomainError is not one of the domain-error tags.
         NotADomainError: (_error) => Respond.early({ x: 1 }),
       },
     }));

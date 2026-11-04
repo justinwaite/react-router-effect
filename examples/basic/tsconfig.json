@@ -1,0 +1,22 @@
+{
+  "include": ["**/*", ".react-router/types/**/*"],
+  "exclude": ["build", "node_modules"],
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "rootDirs": [".", "./.react-router/types"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  }
+}

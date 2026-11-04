@@ -1,9 +1,9 @@
 /**
- * Mounts a real React Router runtime in the browser via `createRoutesStub` and
- * `vitest-browser-react`. This gives the library a *real* loader/action data
- * lifecycle — the effect runs, `Effect.runPromise` settles, and React Router
+ * Mounts the actual React Router runtime in the browser via `createRoutesStub` and
+ * `vitest-browser-react`. This gives the library the actual loader/action data
+ * lifecycle - the effect runs, `Effect.runPromise` resolves, and React Router
  * routes the result to `useLoaderData` / `useActionData` or the `ErrorBoundary`
- * (or follows a redirect) — instead of mocking any of it. That end-to-end flow
+ * (or follows a redirect) - instead of mocking any of it. That end-to-end flow
  * is exactly what this library exists to provide.
  */
 import type { ComponentType } from "react";
@@ -31,7 +31,7 @@ export function renderRoute(
 ) {
   const Stub = createRoutesStub([
     // A no-op HydrateFallback keeps React Router from warning about missing
-    // hydration UI while the loader's async effect settles.
+    // hydration UI while the loader's async effect resolves.
     { path: "/", HydrateFallback: () => null, ...config },
     ...extraRoutes,
   ] as never);

@@ -17,5 +17,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
-  }
+  },
+  // `test/consumer` checks the built package with its own tsconfig, after `vp pack`.
+  "exclude": ["node_modules", "dist", "examples", "test/consumer"]
 }

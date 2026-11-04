@@ -38,7 +38,7 @@ describe("factory handler validation", () => {
   });
 
   it("accepts a factory that registers no handler for a declared domain error", () => {
-    // OtherDomainError is declared but unhandled — it'll fall through to the 500.
+    // OtherDomainError is declared but unhandled - it'll fall through to the 500.
     const factory = makeEffectRouteFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
         BadInputError: (error: BadInputError) => Respond.early({ message: error.message }),
@@ -50,7 +50,7 @@ describe("factory handler validation", () => {
   it("rejects a handler that returns a bare (non-route-error) value", () => {
     makeEffectRouteFactory<DomainErrors>()(() => ({
       errorHandlers: {
-        // @ts-expect-error — 42 is neither a library route error nor a failing Effect.
+        // @ts-expect-error - 42 is neither a library route error nor a failing Effect.
         BadInputError: (_error: BadInputError) => 42,
       },
     }));
@@ -59,7 +59,7 @@ describe("factory handler validation", () => {
   it("rejects a handler whose Effect fails with a non-response value", () => {
     makeEffectRouteFactory<DomainErrors>()(() => ({
       errorHandlers: {
-        // @ts-expect-error — Effect.fail("boom") rejects with a string, not a Response/Data.
+        // @ts-expect-error - Effect.fail("boom") rejects with a string, not a Response/Data.
         BadInputError: (_error: BadInputError) => Effect.fail("boom"),
       },
     }));
@@ -68,7 +68,7 @@ describe("factory handler validation", () => {
   it("rejects a handler for an error that isn't a declared domain error", () => {
     makeEffectRouteFactory<DomainErrors>()((Respond) => ({
       errorHandlers: {
-        // @ts-expect-error — NonDomainError isn't in DomainErrors, so it can't be registered.
+        // @ts-expect-error - NonDomainError isn't in DomainErrors, so it can't be registered.
         NonDomainError: (error: NonDomainError) => Respond.throw({ x: error.x }),
       },
     }));

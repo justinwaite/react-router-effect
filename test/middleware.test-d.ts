@@ -12,8 +12,8 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 // ---------------------------------------------------------------------------
 // `makeMiddleware` pinned to a route's generated `Route.MiddlewareFunction`.
 //
-// Pinning it hands the *whole* call explicit type arguments — TypeScript has no
-// partial inference — so the effect's error/requirement channels can no longer
+// Pinning it gives every type parameter of the call an explicit argument - TypeScript has no
+// partial inference - so the effect's error/requirement channels can no longer
 // be inferred. They must still be checked: exactly the effects `makeLoader` /
 // `makeAction` accept must type-check here, and the ones they reject must not.
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ class NotAuthorizedError extends Data.TaggedError("NotAuthorizedError")<{}> {
     return HttpServerResponse.json({ error: "Not authorized" }, { status: 403 }).pipe(Effect.orDie);
   }
 }
-/** A service-specific error a single route consumes — NOT a declared domain error. */
+/** A service-specific error a single route consumes - NOT a declared domain error. */
 class FooServiceError extends Data.TaggedError("FooServiceError")<{ readonly reason: number }> {}
 
 type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
@@ -48,7 +48,7 @@ class NotInRuntime extends Context.Service<NotInRuntime>()("test/NotInRuntime", 
  * A stand-in for a route's generated `Route.MiddlewareFunction`: server middleware
  * resolving with a `Response`, with the route's own `params` on `args`. Written out
  * (rather than `MiddlewareFunction<Response>`) so these tests also cover the shape
- * typegen actually emits — narrowed args, its own inline `next`.
+ * typegen actually emits - narrowed args, its own inline `next`.
  */
 type RouteMiddlewareFunction = (
   args: {
@@ -91,7 +91,7 @@ describe("a pinned middleware types its args, next and result from the route", (
   });
 
   it("succeeding with something the route can't return fails to type-check", () => {
-    // @ts-expect-error — this route's middleware resolves with a Response, not a string.
+    // @ts-expect-error - this route's middleware resolves with a Response, not a string.
     makeMiddleware<RouteMiddlewareFunction>((_args, _next) => Effect.succeed("nope"));
   });
 });
@@ -149,7 +149,7 @@ describe("a pinned middleware propagates the errors the library handles", () => 
 describe("a pinned middleware still enforces handling of everything else", () => {
   it("leaving a service error unhandled fails to type-check", () => {
     makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
-      // @ts-expect-error — FooServiceError isn't a declared domain error, a library
+      // @ts-expect-error - FooServiceError isn't a declared domain error, a library
       // route error, or respondable, so it must be handled in the effect first.
       Effect.gen(function* () {
         yield* new FooServiceError({ reason: 1 });
@@ -160,7 +160,7 @@ describe("a pinned middleware still enforces handling of everything else", () =>
 
   it("a service error mixed in with domain errors still forces handling", () => {
     makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
-      // @ts-expect-error — DbError is fine, but FooServiceError still must be handled.
+      // @ts-expect-error - DbError is fine, but FooServiceError still must be handled.
       Effect.gen(function* () {
         yield* new DbError({ query: "select 1" });
         yield* new FooServiceError({ reason: 1 });
@@ -201,7 +201,7 @@ describe("a pinned middleware enforces the factory's provided services", () => {
 
   it("requiring a service the runtime does NOT provide fails to type-check", () => {
     factory.makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
-      // @ts-expect-error — NotInRuntime is not provided by the configured runtime.
+      // @ts-expect-error - NotInRuntime is not provided by the configured runtime.
       Effect.gen(function* () {
         const svc = yield* NotInRuntime;
         yield* svc.pong();
@@ -213,7 +213,7 @@ describe("a pinned middleware enforces the factory's provided services", () => {
 
 // ---------------------------------------------------------------------------
 // Unpinned: no type argument, so the effect's channels infer as they do for
-// `makeLoader` / `makeAction` — including the call-site diagnostic.
+// `makeLoader` / `makeAction` - including the call-site diagnostic.
 // ---------------------------------------------------------------------------
 
 describe("an unpinned middleware infers from the effect", () => {
@@ -230,7 +230,7 @@ describe("an unpinned middleware infers from the effect", () => {
 
   it("leaving a service error unhandled fails to type-check", () => {
     makeMiddleware((_args, next) =>
-      // @ts-expect-error — FooServiceError must be handled before makeMiddleware accepts it.
+      // @ts-expect-error - FooServiceError must be handled before makeMiddleware accepts it.
       Effect.gen(function* () {
         yield* new FooServiceError({ reason: 1 });
         return yield* next();

@@ -49,7 +49,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
   });
 
   it("requiring a service the runtime does NOT provide fails to type-check", () => {
-    // @ts-expect-error — NotInRuntime is not provided by the configured runtime,
+    // @ts-expect-error - NotInRuntime is not provided by the configured runtime,
     // so the effect's requirement channel is unsatisfied.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
@@ -68,7 +68,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
         return 42;
       }),
     );
-    // The success value and the Respond.early recover both surface.
+    // The success value and the Respond.early recover both appear.
     expectTypeOf(loader).returns.resolves.toMatchTypeOf<
       number | { readonly data: { recovered: boolean } }
     >();
@@ -79,7 +79,7 @@ describe("without a runtime, effects must require nothing", () => {
   const { makeLoader } = makeEffectRouteFactory()(() => ({}));
 
   it("requiring any service fails to type-check", () => {
-    // @ts-expect-error — no runtime is configured, so RServices is `never` and the
+    // @ts-expect-error - no runtime is configured, so RServices is `never` and the
     // effect may not require InRuntime.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {

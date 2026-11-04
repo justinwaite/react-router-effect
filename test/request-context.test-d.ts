@@ -52,7 +52,7 @@ describe("requestContext satisfies an effect's request-scoped services", () => {
   });
 
   it("requiring a service neither runtime nor request context provides fails", () => {
-    // @ts-expect-error — Unprovided is not in the runtime or the request context,
+    // @ts-expect-error - Unprovided is not in the runtime or the request context,
     // so the effect's requirement channel is unsatisfied.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
@@ -78,7 +78,7 @@ describe("runtime services and request services compose", () => {
   });
 
   it("still rejects a service provided by neither", () => {
-    // @ts-expect-error — Unprovided is in neither source.
+    // @ts-expect-error - Unprovided is in neither source.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         yield* AppConfig;
@@ -94,7 +94,7 @@ describe("without a requestContext, request services are not available", () => {
   const { makeLoader } = makeEffectRouteFactory()(() => ({ runtime }));
 
   it("requiring a request-scoped service fails to type-check", () => {
-    // @ts-expect-error — no requestContext is configured, so RequestContext is not
+    // @ts-expect-error - no requestContext is configured, so RequestContext is not
     // provided and the effect may not require it.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
