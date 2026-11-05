@@ -231,7 +231,7 @@ importers:
         version: 3.0.3
       '@effect/platform-node':
         specifier: 4.1.1
-        version: 4.1.1(effect@4.1.1)(redis@6.3.1)
+        version: 4.1.1(effect@4.1.2)(redis@6.3.1)
       '@react-router/node':
         specifier: 8.4.0
         version: 8.4.0(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@7.0.2)
@@ -254,8 +254,8 @@ importers:
         specifier: 5.0.5
         version: 5.0.5(@voidzero-dev/vite-plus-core@1.4.0(@types/node@25.9.5)(typescript@7.0.2)(yaml@2.9.0))(playwright@1.64.1)(vitest@5.0.5)
       effect:
-        specifier: 4.1.1
-        version: 4.1.1
+        specifier: 4.1.2
+        version: 4.1.2
       playwright:
         specifier: 1.64.1
         version: 1.64.1
@@ -288,13 +288,13 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.1
-        version: 4.1.1(effect@4.1.1)(redis@6.3.1)
+        version: 4.1.1(effect@4.1.2)(redis@6.3.1)
       '@react-router/node':
         specifier: 8.4.0
         version: 8.4.0(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@7.0.2)
       effect:
-        specifier: 4.1.1
-        version: 4.1.1
+        specifier: 4.1.2
+        version: 4.1.2
       isbot:
         specifier: ^5.1.40
         version: 5.2.2
@@ -1566,8 +1566,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.1.1:
-    resolution: {integrity: sha512-XYu65BrcmNqu5i7PPvP4dqL+R5ma37zIsfuSPjcn78mog+6e5PkilNg7Xo+pBpjXJYlWEIpH4j91tMrfW05CMw==}
+  effect@4.1.2:
+    resolution: {integrity: sha512-d3Oah1WyKxFLFh19yWheS5IXIVaITzxZ71JkE1rkUozq/6EcJSU5nPk5bF2QrSygZ3SQoiNQB8TsxFriyMeMaQ==}
 
   electron-to-chromium@1.5.472:
     resolution: {integrity: sha512-s4+nfT29b0FKpVKoaIxl2pWsoNcn7A/nMPSrxayw4T3BsmPeV2lF9Y06BsAQeMGhCTQ4nYJ5XST7jkqe4ZEqFw==}
@@ -2600,19 +2600,19 @@ snapshots:
   '@colors/colors@1.5.0':
     optional: true
 
-  '@effect/platform-node-shared@4.1.1(effect@4.1.1)':
+  '@effect/platform-node-shared@4.1.1(effect@4.1.2)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.1.1
+      effect: 4.1.2
       ws: 8.22.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1)':
+  '@effect/platform-node@4.1.1(effect@4.1.2)(redis@6.3.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.1(effect@4.1.1)
-      effect: 4.1.1
+      '@effect/platform-node-shared': 4.1.1(effect@4.1.2)
+      effect: 4.1.2
       redis: 6.3.1
       undici: 8.12.3
     transitivePeerDependencies:
@@ -3368,7 +3368,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.1.1: {}
+  effect@4.1.2: {}
 
   electron-to-chromium@1.5.472: {}
 
