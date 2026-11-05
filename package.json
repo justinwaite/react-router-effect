@@ -57,7 +57,7 @@
     "@changesets/cli": "^3.0.3",
     "@effect/platform-node": "4.1.1",
     "@react-router/node": "8.4.0",
-    "@types/node": "^25.6.2",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
