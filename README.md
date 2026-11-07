@@ -65,51 +65,69 @@ export const { Respond } = routeFactory;
 
 ### 2. Create the server app
 
-`ReactRouterHttp.make` returns an Effect that makes an Effect HTTP app. The app runs React Router
-with your route factory.
+`App` is a layer of routes on Effect's `HttpRouter`. `ReactRouter.layer` loads the build with your
+route factory. `ReactRouter.routes` registers React Router as the catch-all route.
+`ReactRouterAssets.layer` registers the files of the client build. Your own routes and middleware go
+in the same `Layer.mergeAll`.
 
 ```ts
 // server/app.ts
-import { ReactRouterHttp } from "react-router-effect/server";
+import { Layer } from "effect";
+import { ReactRouter, ReactRouterAssets } from "react-router-effect/server";
 
 import { routeFactory } from "../app/lib/route-factory.server";
 
-export const reactRouterApp = ReactRouterHttp.make({
-  build: () => import("virtual:react-router/server-build"),
-  factory: routeFactory,
-  clientAssets: true, // serves build/client in production
-});
+export const App = Layer.mergeAll(ReactRouter.routes, ReactRouterAssets.layer).pipe(
+  Layer.provide(
+    ReactRouter.layer({
+      build: () => import("virtual:react-router/server-build"),
+      factory: routeFactory,
+    }),
+  ),
+);
 ```
 
 ### 3. Serve it
 
-The server makes the app once, when it starts, and serves it with its own Effect HTTP server and its
-own middleware. In production, making the app loads the build and reads the client build. If the
-server cannot read the client build, it fails to start, and the error names the resolved directory.
+`server.js` serves `App` with `HttpRouter.serve`, which also logs each request. It is the only file
+that does not reload in development. When the server starts in production, `App` loads the build and
+reads the client build. If the server cannot read the client build, it fails to start with a
+`ClientBuildError` that names the resolved directory.
 
-```ts
-// server/main.ts
+```js
+// server.js
 import { createServer } from "node:http";
 
-import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
-import { HttpMiddleware, HttpServer } from "effect/http";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import { Layer } from "effect";
+import { HttpRouter } from "effect/http";
 
-import { reactRouterApp } from "./app";
+const App =
+  process.env.NODE_ENV === "development"
+    ? await (async () => {
+        const { createServer: createVite } = await import("vite");
+        const { ReactRouterVite } = await import("react-router-effect/vite");
+        const vite = await createVite({ server: { middlewareMode: true } });
+        return ReactRouterVite.layer(vite, () =>
+          vite.ssrLoadModule("./server/app.ts").then((module) => module.App),
+        );
+      })()
+    : (await import("./build/server/index.js")).App;
 
-Layer.unwrap(
-  Effect.map(reactRouterApp, (app) => HttpServer.serve(app, HttpMiddleware.logger)),
-).pipe(
-  Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
-  Layer.launch,
-  NodeRuntime.runMain,
+NodeRuntime.runMain(
+  Layer.launch(
+    HttpRouter.serve(App).pipe(
+      Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
+    ),
+  ),
 );
 ```
 
 ### 4. Build the server
 
-Make `server/main.ts` the entry of the server build. The build then contains your server, and
-`react-router build` writes it to `build/server/index.js`.
+Make `server/app.ts` the entry of the server build. `react-router build` then writes `App` to
+`build/server/index.js`.
 
 ```ts
 // vite.config.ts
@@ -118,13 +136,13 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [reactRouter()],
-  environments: { ssr: { build: { rollupOptions: { input: "./server/main.ts" } } } },
+  environments: { ssr: { build: { rollupOptions: { input: "./server/app.ts" } } } },
 });
 ```
 
 ```bash
 react-router build
-NODE_ENV=production node build/server/index.js
+NODE_ENV=production node server.js
 ```
 
 For development, read [Development with Vite](#development-with-vite).
@@ -255,19 +273,36 @@ makeEffectRouteFactory()(() => ({}));
 The runtime provides app-wide services. A request-scoped service is the current user, a request id,
 or a transaction for one request. There are two ways to provide one.
 
-The adapter option `requestContext` builds the services before React Router runs. Every middleware,
-loader and action sees them, and no middleware has to set them:
+A route-scoped router middleware on `ReactRouter.routes` provides services to React Router's
+requests. Every middleware, loader and action sees them, and no React Router middleware has to set
+them:
 
 ```ts
-ReactRouterHttp.make({
-  build: () => import("virtual:react-router/server-build"),
-  factory: routeFactory,
-  requestContext: (request) =>
-    Context.make(RequestInfo, {
-      id: request.headers.get("x-request-id") ?? crypto.randomUUID(),
-      startedAt: Date.now(),
+// server/app.ts
+const RequestServices = HttpRouter.middleware((app) =>
+  Effect.provideServiceEffect(
+    app,
+    RequestInfo,
+    HttpServerRequest.HttpServerRequest.use((request) =>
+      Effect.succeed({
+        id: request.headers["x-request-id"] ?? crypto.randomUUID(),
+        startedAt: Date.now(),
+      }),
+    ),
+  ),
+).layer;
+
+export const App = Layer.mergeAll(
+  ReactRouter.routes.pipe(Layer.provide(RequestServices)),
+  ReactRouterAssets.layer,
+).pipe(
+  Layer.provide(
+    ReactRouter.layer({
+      build: () => import("virtual:react-router/server-build"),
+      factory: routeFactory,
     }),
-});
+  ),
+);
 ```
 
 A [middleware](https://reactrouter.com/how-to/middleware) can also provide services. An effect
@@ -310,12 +345,12 @@ requirement is a compile error. `RequestContextKey<ReqServices>` is an alias of
 
 ## The adapter
 
-`react-router-effect/server` is a React Router adapter for Effect's Node HTTP server
-(`@effect/platform-node`). It handles everything between an `HttpServerRequest` and React Router. That
-is the Web `Request` and its abort signal, the route factory, and the client build. It also converts
-React Router's `Response`, with its streamed body and its cookies. The adapter is an
-Effect HTTP app like any other. The app serves it with its own Effect HTTP server and keeps its own
-middleware: logging, compression, tracing, proxies and other routes.
+`react-router-effect/server` is a React Router adapter for Effect's HTTP router, on Effect's Node
+HTTP server (`@effect/platform-node`). It is the Effect counterpart of `@react-router/express`. It
+handles everything between an `HttpServerRequest` and React Router. That is the Web `Request` and
+its abort signal, the route factory, and the client build. It also converts React Router's
+`Response`, with its streamed body and its cookies. The app keeps its own server, middleware and
+routes.
 
 React Router keeps doing what it does for any other server adapter: documents, `.data` requests,
 streamed promises, resource routes, the lazy route manifest and middleware. Before React Router
@@ -325,66 +360,185 @@ sees the build, the adapter runs every loader, action and middleware through you
   Its failures go through the factory's error handlers.
 - Any other route function passes through. Promise loaders and `makeLoader` wrappers keep working.
 
-The options:
+The layers:
 
-- `build` is the server build, or a function that loads it.
-- `factory` is the route factory.
-- `requestContext: (request) => Context` builds the request's services before React Router runs.
-- `clientAssets: true` serves the client build, `build.assetsBuildDirectory` under
-  `build.publicPath`, before React Router. Files under `assets/` use a content hash in their name,
-  and the adapter caches them for a year as immutable. It caches other files for an hour. It serves
-  the files as `express.static` does. A directory serves its index file, such as a prerendered page.
-  A directory path without the trailing slash redirects to the path with it. It does not serve
-  dotfiles, and a request it does not serve goes to React Router. Like `express.static`, it looks up
-  each GET and HEAD request in the file system. It serves only a build that it loads once: in
-  production mode, or a build value. It never serves a development build, where Vite serves the
-  client. `assetsBuildDirectory` is relative to the working directory of the server. If the adapter
-  cannot read it, making the app fails with a `ClientBuildError` that names the resolved directory.
-  It needs the platform's file system, which `NodeHttpServer.layer` provides.
-- `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. In production the
-  adapter loads the build once.
+- `ReactRouter.layer(options)` provides the `ReactRouter` service. Its options are these:
+  - `build` is the server build, or a function that loads it.
+  - `factory` is the route factory.
+  - `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. At layer build, the
+    layer loads a build value once, or a build function in production mode. Any other build loads
+    for each request.
+  - `loadContext` makes React Router's load context for each request. Read
+    [The load context](#the-load-context).
+- `ReactRouter.routes` registers React Router as the catch-all route on `*`.
+- `ReactRouterAssets.layer` registers the files of the client build. Read
+  [The client build](#the-client-build).
+- `ReactRouterVite.layer`, from `react-router-effect/vite`, serves the app in development. Read
+  [Development with Vite](#development-with-vite).
 
-The Web request comes from `HttpServerRequest.toWeb`, body included. Effect's stream sends the
-`100 Continue` when React Router reads the body of a request that sends `Expect: 100-continue`.
+Provide one value of `ReactRouter.layer` to every layer that reads the service, as `App` does with
+`Layer.provide`. Two values load the build twice.
 
-The request URL is the one Effect derives from the request. An app behind a proxy applies the
-headers it trusts in its own middleware, with `request.modify` or `HttpMiddleware.xForwardedHeaders`.
-The request signal aborts only if the response ends early. That happens when the client leaves while
-React Router runs, or while the body streams. A completed response never aborts it.
+### The load context
+
+`loadContext` does for the adapter what `getLoadContext` does for `@react-router/express`. It
+returns an Effect of a `RouterContextProvider`. Plain loaders and actions, and `handleRequest` in
+`entry.server.tsx`, read its values with `context.get`. Route Effects read services from their
+Effect context. So give route Effects services with router middleware, not with `loadContext`.
+
+```ts
+ReactRouter.layer({
+  build: () => import("virtual:react-router/server-build"),
+  factory: routeFactory,
+  loadContext: (request) =>
+    Effect.sync(() => {
+      const context = new RouterContextProvider();
+      context.set(localeKey, request.headers["accept-language"] ?? "en");
+      return context;
+    }),
+});
+```
+
+The Effect gets the services of the layer and the services of the request. The services of the
+request, such as its scope, win. The adapter adds its own keys to the provider. If the Effect dies,
+the client gets an empty 500.
+
+### Routes and middleware
+
+The route that a request matches decides which middleware runs on it. Effect has three kinds of
+middleware:
+
+- A server middleware, the `middleware` option of `HttpRouter.serve`, wraps every request. It also
+  wraps the send of the response, so a change to the response with `Effect.map` does not reach the
+  client. `HttpMiddleware.compression` works there.
+- A global router middleware, `HttpRouter.middleware(fn, { global: true })`, wraps every route.
+- A route-scoped middleware, `HttpRouter.middleware(fn).layer`, applies only to the routes of the
+  layers that you provide it to.
+
+Route-scoped middleware selects the middleware of each kind of request. `HttpRouter.serve` logs
+every request. To leave file requests out of that log, provide `HttpRouter.disableLogger` to the
+assets layer only:
+
+```ts
+export const App = Layer.mergeAll(
+  ReactRouter.routes.pipe(Layer.provide(RequestServices)),
+  ReactRouterAssets.layer.pipe(Layer.provide(HttpRouter.disableLogger)),
+  HttpRouter.middleware(HttpMiddleware.compression(), { global: true }),
+).pipe(
+  Layer.provide(
+    ReactRouter.layer({
+      build: () => import("virtual:react-router/server-build"),
+      factory: routeFactory,
+    }),
+  ),
+);
+```
+
+The order of two route-scoped middleware layers on one route is not fixed. If the order matters,
+join them into one middleware with `combine`:
+`HttpRouter.middleware(first).combine(HttpRouter.middleware(second)).layer`.
+
+These rules apply to the routes:
+
+- An exact route wins over a route with a parameter, and both win over a wildcard. So your own
+  routes and the files of the client build win over React Router's `*`.
+- A route of your own on `*` or `/*`, for a method that React Router's route has, collides with it.
+  Then the server fails to start. A route of your own with the path of a file of the client build
+  fails the same way.
+- If a HEAD request matches no HEAD route, it uses the GET route of its path. `ReactRouter.routes`
+  registers no HEAD route. So a GET route of your own answers HEAD, as it does in Express.
+- React Router's route takes the methods of `HttpMethod.all`: GET, POST, PUT, DELETE, PATCH,
+  OPTIONS, TRACE and QUERY, and HEAD through GET. A request with another method, such as PROPFIND,
+  gets a 404 from the router.
+- Register `ReactRouter.routes` at the root of the router. Under a prefix, the router removes the
+  prefix from the request's URL, and React Router gets the wrong path. To serve the app under a
+  path, set React Router's `basename`.
+- The router ignores the case of the path. On a file system that is case-sensitive, a request for a
+  file with the wrong case matches the file's route and gets a 404.
+
+### The client build
+
+`ReactRouterAssets.layer` serves `build.assetsBuildDirectory` under `build.publicPath`, as the two
+`express.static` lines of React Router's Express template do. It needs the platform's file system,
+which `NodeHttpServer.layer` provides.
+
+- The hashed directory is the directory of the build's manifest URL, such as `/assets`. React
+  Router's build writes files with a content hash in their names there. The layer caches them for a
+  year as immutable. A request under the hashed directory gets a 404 for a file that the directory
+  does not have. A path with `..` does not get out of the hashed directory.
+- Each other file gets its own route for GET and HEAD, and the layer caches it for an hour. At
+  server start, the layer reads the client build. If a file is added outside the hashed directory
+  later, the layer serves it only after a restart.
+- A directory with an `index.html`, such as a prerendered page, serves that file. Its path without
+  the trailing slash redirects to the path with it. A root `index.html`, such as a prerendered home
+  page, serves `/`, and React Router's catch-all yields to it.
+- If the manifest URL is not under `publicPath`, or it is at the root of `publicPath`, there is no
+  hashed directory. Then the layer caches every file for an hour.
+- The layer serves no dotfiles, such as `.vite/manifest.json`, as `express.static` does.
+- The layer registers nothing for a build that loads for each request, such as a development build.
+  Vite serves the client there. It also registers nothing for a `publicPath` on another origin.
+- `assetsBuildDirectory` is relative to the working directory of the server. If the layer cannot
+  read it, the server fails to start with a `ClientBuildError` that names the resolved directory.
+  If a file name has a `*`, the server fails to start with a `ClientBuildError` too, because the
+  router cannot match that name.
+
+### Requests
+
+The Web request comes from `HttpServerRequest.toWeb`, body included. If a request sends
+`Expect: 100-continue`, Effect's stream sends the `100 Continue` at the moment React Router reads
+the body.
+
+The request URL is the one that Effect derives from the request: its path, its `host` header and its
+protocol. An app behind a proxy applies the headers that it trusts with
+`HttpMiddleware.xForwardedHeaders`, as a server middleware or a global router middleware. Both run
+before the router reads the request. `HttpMiddleware.tracer` runs outside the server middleware, so
+its span has the request before the change.
+
+Behind a chain of proxies, React Router can expect a different host and scheme than
+`xForwardedHeaders` gives. If `X-Forwarded-Host` or `X-Forwarded-Proto` does not have one value for
+each `X-Forwarded-For` entry, `xForwardedHeaders` ignores that header. Express takes the first value
+of each header. If your app is behind a proxy, make sure that the correct headers reach the server.
+
+If the client leaves while React Router runs or while the body streams, the response ends early, and
+the request signal aborts. A completed response never aborts it.
+
+Effect's Node server writes the head of a streamed response with its first chunk. So an
+`EventSource` client sees the response open at the first event, and not at the return of the route.
 
 React Router logs and answers the errors of route code. If the adapter's own steps fail, for example
-a `requestContext` that throws, the adapter logs the error with `Effect.logError` and answers 500.
-The log goes to the loggers of the app's Effect runtime.
+a `loadContext` that dies, the adapter logs the error with `Effect.logError`. Then it answers an
+empty 500. The log goes to the loggers of the app's Effect runtime.
 
 ### Development with Vite
 
-In development Vite serves the client. `react-router-effect/vite` runs Vite's middleware in front of
-the app, on Effect's Node HTTP server:
+In development, Vite serves the client and loads the server code. `ReactRouterVite.layer(vite,
+loadApp)`, from `react-router-effect/vite`, passes each request to Vite first. For a request that
+Vite passes on, it calls `loadApp` and serves the request with the `App` that `loadApp` returns. The
+`server.js` of [Serve it](#3-serve-it) uses it.
 
-```ts
-import { ReactRouterVite } from "react-router-effect/vite";
+Load `server/app.ts` with `vite.ssrLoadModule`. Then the route modules, the factory and the adapter
+share Vite's module graph. When `loadApp` returns a new `App` value, after an edit, the layer builds
+the new `App` and closes the old one. Concurrent requests share one build.
 
-const vite = await createServer({ server: { middlewareMode: true } });
-HttpServer.serve(Effect.flatten(reactRouterApp).pipe(ReactRouterVite.devMiddleware(vite)));
-```
-
-In development, making the app does nothing but return it, so the server can make it for each
-request. Load the module that calls `ReactRouterHttp.make` through `vite.ssrLoadModule`. Then the route
-modules, the factory and the adapter share Vite's module graph. The example's `server.js` and
-`server/main.ts` do this.
+- A defect, such as a Vite error or an `App` that fails to build, goes to the app's loggers, and the
+  client gets an empty 500. Before that, the layer calls `vite.ssrFixStacktrace`, so the stack shows
+  your source files.
+- The `routerConfig` option of `HttpRouter.serve` applies to the server's router only. In
+  development, the `App` has its own router, with the default configuration.
+- Vite's middleware takes Node requests, so the layer needs Effect's Node HTTP server.
 
 ### Cookies
 
 Set cookies from route code with React Router's cookie helpers, `createCookie` and the session
 storages, as in any React Router app. The adapter converts React Router's `Set-Cookie` values into
-the response's `cookies`, as `HttpServerResponse.fromWeb` does. Effect HTTP middleware around the
-adapter can read and change them like any other cookie. A response that replaces React Router's has
-none of them.
+the response's `cookies`, as `HttpServerResponse.fromWeb` does. A router middleware on
+`ReactRouter.routes` can read and change them like any other cookie. A response that replaces React
+Router's has none of them.
 
 Effect keeps one cookie per name and only the attributes it knows: `Max-Age`, `Domain`, `Path`,
-`Expires`, `HttpOnly`, `Secure`, `Partitioned`, `Priority` and `SameSite`. If one response sets the
-same cookie name twice, for example to expire it on one path and set it on another, only the last
-one is sent.
+`Expires`, `HttpOnly`, `Secure`, `Partitioned`, `Priority` and `SameSite`. One response can set the
+same cookie name twice, for example to expire it on one path and set it on another. Then Effect
+sends only the last one.
 
 ### Content type
 
@@ -401,10 +555,10 @@ return new Response(Readable.toWeb(file) as ReadableStream, {
 
 ### Tracing
 
-When the request has a server span, the adapter traces React Router. The span comes from
-`HttpMiddleware.tracer` with a tracer that exports spans, such as `OtelTracer`. Each middleware,
-loader and action runs in a span of its own, such as `react-router.loader routes/todos`. The spans
-nest as React Router calls the functions. This is the example's `GET /todos`:
+When the request has a server span, the adapter traces React Router. If the app provides a tracer
+that exports spans, such as `OtelTracer`, Effect's HTTP server makes the server span. Each
+middleware, loader and action runs in a span of its own, such as `react-router.loader routes/todos`.
+The spans nest as React Router calls the functions. This is the example's `GET /todos`:
 
 ```text
 GET                           the server span, with http.route=/todos
@@ -422,6 +576,12 @@ the current Effect span the active OpenTelemetry context. So the clients that an
 instrumentation traces nest there too, such as a database driver that a promise loader calls.
 Without a server span, or with Effect's native tracer, whose spans go nowhere, the adapter adds no
 spans and no cost.
+
+On React Router 8, the adapter sets `http.route` on the server span to the pattern of the matched
+routes, such as `/todos/:id`. It does this also for a page that runs no route function. A request
+that matches no route keeps the router's `*`. On React Router 7, a page that runs no route function
+also keeps `*`. `ReactRouter.layer` reads the tracer once, at layer build. So it does not see a
+tracer that the app provides only inside a request.
 
 ## Route functions
 
@@ -510,8 +670,11 @@ Type '{}' is missing the following properties from type ...:
 
 ### Requirements and limits
 
-- Effect 4.1 or later, React Router 8.3 or later for the adapter, and `skipLibCheck`. The brand
-  augments `Effect`, and TypeScript cannot test the variance annotations of that augmentation.
+- Effect 4.1 or later, and `skipLibCheck`. The brand augments `Effect`, and TypeScript cannot test
+  the variance annotations of that augmentation.
+- For the adapter, React Router 8.3 or later, or React Router 7.16 or later with
+  `future.v8_middleware`. The adapter gives React Router a `RouterContextProvider` as its load
+  context, and React Router 7 accepts one only with that flag.
 - A route module export must be a function. A bare `Effect` value is not a loader.
 - Prerendering (`prerender`) and RSC mode call the build without the adapter.
 
@@ -594,8 +757,8 @@ of a rejected promise. It flows through the same recover and throw handling as a
 
 ### Per-request services
 
-Without the adapter there is no `requestContext` option. Set the context key in a plain React Router
-middleware. The factory's `requestContext` reads it, and provides those services to the loader or
+Without the adapter, no router middleware runs before React Router. Set the context key in a plain
+React Router middleware. The factory's `requestContext` reads it, and provides those services to the loader or
 action:
 
 ```ts
@@ -651,10 +814,12 @@ export const loader = makeLoader(() =>
   effect context.
 - `EffectRouteArgs<Args>`, `EffectMiddlewareArgs<Middleware>`, `RouteData<F>` and `Register` are the
   types of plain Effect routes.
-- `react-router-effect/server` exports `ReactRouterHttp.make`, and the types `RouteEffectCheck` and
+- `react-router-effect/server` exports `ReactRouter`, with `ReactRouter.layer`, `ReactRouter.routes`
+  and the `ReactRouter.Options` type, and `ReactRouterAssets`, with `ReactRouterAssets.layer` and
+  `ReactRouterAssets.ClientBuildError`. It also exports the types `RouteEffectCheck` and
   `RouteEffectFailures`.
-- `react-router-effect/vite` exports `ReactRouterVite.devMiddleware`, for development. It needs
-  `@effect/platform-node`.
+- `react-router-effect/vite` exports `ReactRouterVite.layer` and the `ReactRouterVite.ViteDevServer`
+  type, for development. It needs `@effect/platform-node`.
 
 ## Development
 
