@@ -10,6 +10,15 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
   vitest: 5.0.5
   vite-plus: ^1.5.0
+minimumReleaseAgeExclude:
+  - "@effect/tsgo-darwin-arm64@0.67.5"
+  - "@effect/tsgo-darwin-x64@0.67.5"
+  - "@effect/tsgo-linux-arm64@0.67.5"
+  - "@effect/tsgo-linux-arm@0.67.5"
+  - "@effect/tsgo-linux-x64@0.67.5"
+  - "@effect/tsgo-win32-arm64@0.67.5"
+  - "@effect/tsgo-win32-x64@0.67.5"
+  - "@effect/tsgo@0.67.5"
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"

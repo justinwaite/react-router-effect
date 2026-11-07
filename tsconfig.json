@@ -16,7 +16,24 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Effect suggestions, warnings and errors all fail `tsc`.
+        "ignoreEffectSuggestionsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "ignoreEffectErrorsInTscExitCode": false,
+        // This library is built on Effect's unstable HTTP modules and exports its own unstable API.
+        "allowedUnstableApis": [
+          "effect/http",
+          "effect/FileSystem",
+          "@effect/platform-node",
+          "effect/Path",
+          "react-router-effect"
+        ]
+      }
+    ]
   },
   // `test/consumer` checks the built package with its own tsconfig, after `vp pack`.
   "exclude": ["node_modules", "dist", "examples", "test/consumer"]
