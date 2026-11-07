@@ -1,7 +1,7 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Context, Data, Effect, Layer, Logger, ManagedRuntime } from "effect";
+import { Context, Data, Effect, Layer, Logger, ManagedRuntime, Predicate } from "effect";
 import {
   Headers as HttpHeaders,
   HttpMiddleware,
@@ -327,7 +327,7 @@ beforeAll(async () => {
   runtime = ManagedRuntime.make(ServerLive);
   const server = await runtime.runPromise(HttpServer.HttpServer);
   const address = server.address;
-  if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+  if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
   origin = `http://localhost:${address.port}`;
 });
 
@@ -650,7 +650,8 @@ describe("adapter errors", () => {
       ),
     );
     const server = await runtime.runPromise(HttpServer.HttpServer);
-    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(server.address, "UnixPathAddress"))
+      throw new Error("Expected a TCP address");
     return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
   };
 

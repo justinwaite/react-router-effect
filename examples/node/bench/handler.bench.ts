@@ -13,7 +13,7 @@ import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createRequestListener } from "@react-router/node";
-import { Layer, ManagedRuntime } from "effect";
+import { Layer, ManagedRuntime, Predicate } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import { afterAll, expect, test } from "vite-plus/test";
 
@@ -32,7 +32,8 @@ const adapterRuntime = ManagedRuntime.make(
   ),
 );
 const adapterAddress = (await adapterRuntime.runPromise(HttpServer.HttpServer)).address;
-if (adapterAddress._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+if (Predicate.isTagged(adapterAddress, "UnixPathAddress"))
+  throw new Error("Expected a TCP address");
 const adapterOrigin = `http://localhost:${adapterAddress.port}`;
 
 /** `@react-router/node` on `node:http`, on a free port. */

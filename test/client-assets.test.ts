@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Effect, Layer, Logger, ManagedRuntime } from "effect";
+import { Effect, Layer, Logger, ManagedRuntime, Predicate } from "effect";
 import { HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import type { ServerBuild } from "react-router";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -107,7 +107,8 @@ describe("ReactRouterAssets.layer", () => {
       ),
     );
     const server = await runtime.runPromise(HttpServer.HttpServer);
-    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(server.address, "UnixPathAddress"))
+      throw new Error("Expected a TCP address");
     const port = server.address.port;
     return { port, origin: `http://localhost:${port}`, stop: () => runtime.dispose() };
   };
@@ -346,9 +347,11 @@ describe("ReactRouterAssets.layer", () => {
     const root = mkdtempSync(join(tmpdir(), "client-assets-star-"));
     writeFileSync(join(root, "a*b.txt"), "star");
     try {
-      await expect(
-        startApp({ ...options, build: makeBuild({ assetsBuildDirectory: root }) }),
-      ).rejects.toMatchObject({ _tag: "ClientBuildError", directory: root });
+      const failure = startApp({ ...options, build: makeBuild({ assetsBuildDirectory: root }) });
+      await expect(failure).rejects.toSatisfy((error) =>
+        Predicate.isTagged(error, "ClientBuildError"),
+      );
+      await expect(failure).rejects.toMatchObject({ directory: root });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -369,13 +372,14 @@ describe("ReactRouterAssets.layer", () => {
   });
 
   it("fails with a ClientBuildError when it cannot read the client build", async () => {
-    await expect(
-      startApp({
-        ...options,
-        build: makeBuild({ assets: hashedAssets, assetsBuildDirectory: "missing/client" }),
-      }),
-    ).rejects.toMatchObject({
-      _tag: "ClientBuildError",
+    const failure = startApp({
+      ...options,
+      build: makeBuild({ assets: hashedAssets, assetsBuildDirectory: "missing/client" }),
+    });
+    await expect(failure).rejects.toSatisfy((error) =>
+      Predicate.isTagged(error, "ClientBuildError"),
+    );
+    await expect(failure).rejects.toMatchObject({
       directory: join(process.cwd(), "missing/client"),
       message: `Cannot read the client build at ${join(process.cwd(), "missing/client")}`,
     });
@@ -464,7 +468,8 @@ describe("build loading", () => {
           ),
         );
         const server = await runtime.runPromise(HttpServer.HttpServer);
-        if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+        if (Predicate.isTagged(server.address, "UnixPathAddress"))
+          throw new Error("Expected a TCP address");
         return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
       }),
     );
@@ -548,7 +553,8 @@ describe("ReactRouterVite.layer", () => {
       ),
     );
     const server = await runtime.runPromise(HttpServer.HttpServer);
-    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(server.address, "UnixPathAddress"))
+      throw new Error("Expected a TCP address");
     return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
   };
 

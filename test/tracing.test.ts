@@ -1,7 +1,7 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Effect, Layer, ManagedRuntime, Option, Predicate, Tracer } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Predicate, Tracer } from "effect";
 import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { data, RouterContextProvider, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -153,7 +153,7 @@ beforeAll(async () => {
     ),
   );
   const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
-  if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+  if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
   origin = `http://localhost:${address.port}`;
 });
 
@@ -170,7 +170,7 @@ beforeEach(() => {
 /** Waits until every recorded span has ended: the server span ends after the body is sent. */
 const ended = async () => {
   for (let attempt = 0; attempt < 50; attempt++) {
-    if (spans.length > 0 && spans.every((span) => span.status._tag === "Ended")) return;
+    if (spans.length > 0 && spans.every((span) => Predicate.isTagged(span.status, "Ended"))) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("The spans did not end");
@@ -247,7 +247,8 @@ describe("spans", () => {
     await ended();
     const exitOf = (name: string) => {
       const status = spanNamed(name).status;
-      return status._tag === "Ended" ? status.exit._tag : status._tag;
+      if (!Predicate.isTagged(status, "Ended")) return "Started";
+      return Exit.isSuccess(status.exit) ? "Success" : "Failure";
     };
     expect(exitOf("react-router.loader redirect")).toBe("Success");
     expect(exitOf("react-router.loader broken")).toBe("Failure");
@@ -287,7 +288,7 @@ describe("http.route", () => {
       ),
     );
     const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
-    if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
     return { origin: `http://localhost:${address.port}`, stop: () => runtime.dispose() };
   };
 
@@ -392,7 +393,7 @@ describe("http.route with spans of the app's own middleware", () => {
       ),
     );
     const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
-    if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
     return { origin: `http://localhost:${address.port}`, stop: () => runtime.dispose() };
   };
 

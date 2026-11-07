@@ -1,7 +1,7 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Context, Data, Effect, Layer, Logger, ManagedRuntime, Option } from "effect";
+import { Context, Data, Effect, Layer, Logger, ManagedRuntime, Option, Predicate } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   createContext,
@@ -219,7 +219,7 @@ beforeAll(async () => {
   runtime = ManagedRuntime.make(ServerLive);
   const server = await runtime.runPromise(HttpServer.HttpServer);
   const address = server.address;
-  if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+  if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
   origin = `http://localhost:${address.port}`;
 });
 
