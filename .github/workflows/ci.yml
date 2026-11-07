@@ -67,6 +67,11 @@ jobs:
         working-directory: examples/basic
         run: vp exec react-router typegen
 
+      # The Cloudflare example also needs the Worker's runtime and env types.
+      - name: Generate the Cloudflare example's types
+        working-directory: examples/cloudflare
+        run: vp exec wrangler types && vp exec react-router typegen
+
       - name: Format, lint & type check
         run: vp check
 

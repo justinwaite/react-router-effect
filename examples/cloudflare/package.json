@@ -1,0 +1,33 @@
+{
+  "name": "react-router-effect-example-cloudflare",
+  "private": true,
+  "description": "A React Router framework-mode app served by react-router-effect from a Cloudflare Worker.",
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "preview": "vp preview",
+    "typecheck": "wrangler types && react-router typegen && tsc",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "effect": "4.1.1",
+    "isbot": "^5.2.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "8.4.0",
+    "react-router-effect": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.67.0",
+    "@react-router/dev": "8.5.1",
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^7.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "4.158.0"
+  }
+}
