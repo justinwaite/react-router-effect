@@ -3,6 +3,9 @@
  * router, as the `express.static` lines of React Router's Express template
  * do.
  *
+ * Its API is unstable: a minor version can change it.
+ *
+ * @stability unstable
  * @since 2.2.0
  */
 import { Array as Arr, Data, Effect, FileSystem, type Layer, Option, Path } from "effect";
@@ -22,6 +25,7 @@ import { ReactRouter } from "./server.ts";
  * `assetsBuildDirectory` is relative to the working directory of the server,
  * so `directory` is the path that it resolved to.
  *
+ * @stability unstable
  * @since 2.2.0
  */
 export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
@@ -116,6 +120,8 @@ const makeHandler = Effect.fnUntraced(function* (options: {
  * ```ts
  * ReactRouterAssets.layer.pipe(Layer.provide(HttpRouter.disableLogger))
  * ```
+ *
+ * @stability unstable
  */
 export const layer: Layer.Layer<
   never,

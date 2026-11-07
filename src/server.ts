@@ -1,5 +1,5 @@
 /**
- * Serves a React Router framework-mode build from Effect's Node HTTP server.
+ * Serves a React Router framework-mode build from Effect's HTTP server.
  *
  * The adapter converts each `HttpServerRequest` into a Web `Request`, calls
  * React Router's own request handler, and streams the `Response` back. React
@@ -20,6 +20,9 @@
  * through unchanged, so existing promise loaders and `makeLoader` wrappers keep
  * working.
  *
+ * The adapter's API is unstable: a minor version can change it.
+ *
+ * @stability unstable
  * @since 2.1.0
  */
 import {
@@ -441,6 +444,8 @@ const routeMethods = Arr.filter(HttpMethod.all, (method) => method !== "HEAD");
  *   ),
  * );
  * ```
+ *
+ * @stability unstable
  */
 export class ReactRouter extends Context.Service<
   ReactRouter,
@@ -466,6 +471,8 @@ export class ReactRouter extends Context.Service<
    * Provides React Router. A build value, or a build function in production
    * mode, loads when the layer builds. Provide one value of this layer to
    * every layer that reads the service: two values load the build twice.
+   *
+   * @stability unstable
    */
   static readonly layer = <R = never>(
     options: ReactRouter.Options<R>,
@@ -479,8 +486,10 @@ export class ReactRouter extends Context.Service<
    * prerendered home page of `ReactRouterAssets.layer`. A HEAD request uses
    * the GET route of its path, React Router's or the app's own, as Express
    * does. A method outside `HttpMethod.all` gets the router's 404. Register
-   * it at the root of the router: under a prefix, the router removes the
-   * prefix from the request's URL.
+   * it at the root of the router: under a prefix, React Router does not get
+   * the path that it expects.
+   *
+   * @stability unstable
    */
   static readonly routes = HttpRouter.use((router) =>
     Effect.flatMap(ReactRouter, ({ handle }) =>
@@ -490,7 +499,11 @@ export class ReactRouter extends Context.Service<
 }
 
 export declare namespace ReactRouter {
-  /** The options of {@link ReactRouter.layer}. `R` is the requirement of `loadContext`. */
+  /**
+   * The options of {@link ReactRouter.layer}. `R` is the requirement of `loadContext`.
+   *
+   * @stability unstable
+   */
   export interface Options<R = never> {
     /** The server build: `() => import("virtual:react-router/server-build")`. */
     readonly build: BuildSource;

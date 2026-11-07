@@ -8,6 +8,9 @@
  * it each request first. Vite's middleware is a Connect stack of Node
  * requests and responses, so this layer needs Effect's Node HTTP server.
  *
+ * Its API is unstable: a minor version can change it.
+ *
+ * @stability unstable
  * @since 2.1.0
  */
 import type * as Http from "node:http";
@@ -16,7 +19,11 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import { Effect, Exit, Layer, Option, Predicate, Scope, SynchronizedRef, Tuple } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-/** The parts of a Vite dev server that the adapter uses. */
+/**
+ * The parts of a Vite dev server that the adapter uses.
+ *
+ * @stability unstable
+ */
 export interface ViteDevServer {
   /** Vite's Connect middleware stack. */
   readonly middlewares: (
@@ -85,6 +92,8 @@ const passThroughVite = (
  * response. A defect, such as a Vite error, a `loadApp` that rejects or an
  * `App` that fails to build, goes to the app's loggers, after
  * `ssrFixStacktrace` maps its stack, and the client gets an empty 500.
+ *
+ * @stability unstable
  */
 export const layer = <E, R>(
   vite: ViteDevServer,
