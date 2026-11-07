@@ -33,6 +33,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   Record,
   Scope,
   Stream,
@@ -181,7 +182,7 @@ const hasDotSegment = (path: string): boolean =>
 
 /** True when a static lookup found no file, so the request goes on to React Router. */
 const isNotFound = (error: HttpServerError.HttpServerError): boolean =>
-  error.reason._tag === "RouteNotFound";
+  Predicate.isTagged(error.reason, "RouteNotFound");
 
 /**
  * The app serves the client build, and cannot read its directory. The

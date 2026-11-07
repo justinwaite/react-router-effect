@@ -682,3 +682,154 @@ describe("ReactRouterAssets.layer", () => {
     expect(await response.text()).toBe("export {};");
   });
 });
+
+describe("ReactRouterVite.layer", () => {
+  /** The stacks that `ssrFixStacktrace` mapped, by error message. */
+  const fixed: Array<string> = [];
+
+  /** Answers `/@vite/client` after a delay, fails `/broken`, and passes on the rest. */
+  const vite: ReactRouterVite.ViteDevServer = {
+    middlewares: (request, response, next) => {
+      if (request.url === "/@vite/client") {
+        setTimeout(() => {
+          response.setHeader("content-type", "text/javascript");
+          response.end("// vite client");
+        }, 20);
+        return;
+      }
+      if (request.url === "/broken") return next(new Error("transform failed"));
+      next();
+    },
+    ssrFixStacktrace: (error) => {
+      fixed.push(error.message);
+    },
+  };
+
+  /** The versions of `App` whose scope closed, and the number of builds of `App`. */
+  const closed: Array<string> = [];
+  let builds = 0;
+
+  /**
+   * The `App` of `server/app.ts` at one version: React Router, a route that
+   * shows the version, and a route that only this version has.
+   */
+  const appVersion = (version: string) =>
+    Layer.mergeAll(
+      ReactRouter.routes,
+      HttpRouter.add("GET", "/version", HttpServerResponse.text(version)),
+      HttpRouter.add("GET", `/only-${version}`, HttpServerResponse.text(`only ${version}`)),
+      Layer.effectDiscard(
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            builds += 1;
+          }),
+          () => Effect.sync(() => closed.push(version)),
+        ),
+      ),
+    ).pipe(
+      Layer.provide(
+        ReactRouter.layer({ build: makeBuild(), factory: routeFactory, mode: "development" }),
+      ),
+    );
+
+  /** What `loadApp` returns, as `ssrLoadModule` returns the current `App` after an edit. */
+  let current = appVersion("v1");
+  let rejectLoad = false;
+  const loadApp = () =>
+    rejectLoad ? Promise.reject(new Error("syntax error")) : Promise.resolve(current);
+
+  /** The messages of the app's logs. */
+  const messages: Array<unknown> = [];
+  const capture = Logger.make(({ message }) => {
+    messages.push(Array.isArray(message) ? message[0] : message);
+  });
+
+  const startDev = async () => {
+    const runtime = ManagedRuntime.make(
+      HttpRouter.serve(ReactRouterVite.layer(vite, loadApp), {
+        disableLogger: true,
+        disableListenLog: true,
+      }).pipe(
+        Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+        Layer.provide(Logger.layer([capture])),
+      ),
+    );
+    const server = await runtime.runPromise(HttpServer.HttpServer);
+    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
+  };
+
+  let dev: Awaited<ReturnType<typeof startDev>>;
+
+  beforeAll(async () => {
+    dev = await startDev();
+  });
+
+  afterAll(() => dev.stop());
+
+  it("serves what Vite answers", async () => {
+    const response = await fetch(`${dev.origin}/@vite/client`);
+    expect(response.headers.get("content-type")).toBe("text/javascript");
+    expect(await response.text()).toBe("// vite client");
+  });
+
+  it("passes what Vite does not answer on to the app", async () => {
+    expect(await (await fetch(`${dev.origin}/todos`)).text()).toBe("router /todos");
+    expect(await (await fetch(`${dev.origin}/version`)).text()).toBe("v1");
+  });
+
+  it("logs a Vite error with its stack mapped, and answers an empty 500", async () => {
+    messages.length = 0;
+    fixed.length = 0;
+    const response = await fetch(`${dev.origin}/broken`);
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(fixed).toEqual(["transform failed"]);
+    expect(messages).toContain("Request failed in development");
+  });
+
+  it("logs a loadApp that rejects, and answers an empty 500", async () => {
+    messages.length = 0;
+    fixed.length = 0;
+    rejectLoad = true;
+    try {
+      const response = await fetch(`${dev.origin}/version`);
+      expect(response.status).toBe(500);
+      expect(fixed).toEqual(["syntax error"]);
+      expect(messages).toContain("Request failed in development");
+    } finally {
+      rejectLoad = false;
+    }
+  });
+
+  it("builds a new App on the next request after an edit, and closes the old App", async () => {
+    await fetch(`${dev.origin}/version`);
+    expect(await (await fetch(`${dev.origin}/only-v2`)).text()).toBe("router /only-v2");
+    closed.length = 0;
+    const before = builds;
+    current = appVersion("v2");
+    expect(await (await fetch(`${dev.origin}/only-v2`)).text()).toBe("only v2");
+    expect(await (await fetch(`${dev.origin}/version`)).text()).toBe("v2");
+    expect(builds - before).toBe(1);
+    expect(closed).toEqual(["v1"]);
+  });
+
+  it("builds an App once for concurrent requests", async () => {
+    const before = builds;
+    current = appVersion("v3");
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => fetch(`${dev.origin}/version`).then((r) => r.text())),
+    );
+    expect(responses).toEqual(["v3", "v3", "v3", "v3", "v3"]);
+    expect(builds - before).toBe(1);
+  });
+
+  it("closes the current App when the server stops", async () => {
+    const other = await startDev();
+    current = appVersion("v4");
+    await fetch(`${other.origin}/version`);
+    closed.length = 0;
+    await other.stop();
+    expect(closed).toEqual(["v4"]);
+  });
+});
