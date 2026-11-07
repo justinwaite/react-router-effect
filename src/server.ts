@@ -29,6 +29,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Layer,
   Option,
   Path,
   Scope,
@@ -38,6 +39,7 @@ import {
 import {
   Cookies,
   type HttpPlatform,
+  HttpRouter,
   HttpServerError,
   HttpServerRequest,
   HttpServerResponse,
@@ -639,6 +641,132 @@ const serve = (
     // that does not load, or React Router's handler rejecting, goes to the
     // app's loggers, and the client gets a 500, as Express's error handler
     // does. Answering it keeps a logger middleware from logging it again.
+    Effect.catchDefect((defect) =>
+      Effect.logError("React Router adapter failed", defect).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 500 })),
+      ),
+    ),
+  );
+
+// ---------------------------------------------------------------------------
+// The ReactRouter service.
+// ---------------------------------------------------------------------------
+
+/**
+ * React Router, as a service of the Effect HTTP app. `ReactRouter.layer`
+ * provides it, and `ReactRouter.routes` registers it on the app's router as
+ * the catch-all route.
+ *
+ * ```ts
+ * export const App = ReactRouter.routes.pipe(
+ *   Layer.provide(
+ *     ReactRouter.layer({
+ *       build: () => import("virtual:react-router/server-build"),
+ *       factory: routeFactory,
+ *     }),
+ *   ),
+ * );
+ * ```
+ */
+export class ReactRouter extends Context.Service<
+  ReactRouter,
+  {
+    /**
+     * The build, when the layer loaded it once at startup: a build value, or
+     * a build function in production mode. `None` when the build loads for
+     * each request.
+     */
+    readonly build: Option.Option<ServerBuild>;
+    /** Answers the current request with React Router. */
+    readonly handle: Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      HttpServerError.RequestError,
+      HttpServerRequest.HttpServerRequest
+    >;
+  }
+>()("react-router-effect/ReactRouter") {
+  /**
+   * Provides React Router. A build value, or a build function in production
+   * mode, loads when the layer builds. Provide one value of this layer to
+   * every layer that reads the service: two values load the build twice.
+   */
+  static readonly layer = (options: ReactRouter.Options): Layer.Layer<ReactRouter> =>
+    Layer.effect(ReactRouter, makeReactRouter(options));
+
+  /**
+   * Registers React Router as the catch-all route of the app's router, for
+   * every method on `/*`. A route that the app registers itself wins over it.
+   * Register it at the root of the router: under a prefix, the router removes
+   * the prefix from the request's URL.
+   */
+  static readonly routes: Layer.Layer<
+    never,
+    never,
+    | HttpRouter.HttpRouter
+    | ReactRouter
+    | HttpRouter.Request.From<"Error", HttpServerError.RequestError>
+  > = HttpRouter.use((router) =>
+    Effect.flatMap(ReactRouter, ({ handle }) => router.add("*", "/*", handle)),
+  );
+}
+
+export declare namespace ReactRouter {
+  /** The options of {@link ReactRouter.layer}. */
+  export interface Options {
+    /** The server build: `() => import("virtual:react-router/server-build")`. */
+    readonly build: BuildSource;
+    /** The route factory whose runner, runtime and error model route Effects use. */
+    readonly factory: { readonly handlers: RouteHandlers };
+    /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
+    readonly mode?: string | undefined;
+  }
+}
+
+/**
+ * Makes the service. A build value, or a build function in production mode,
+ * loads once here, so a build that does not load stops the server's start.
+ * Any other build loads for each request, and gets a new React Router handler
+ * when its value changes.
+ */
+const makeReactRouter = Effect.fnUntraced(function* (options: ReactRouter.Options) {
+  const mode = options.mode ?? process.env.NODE_ENV;
+  const loadBuild = makeBuildLoader(options, mode);
+  if (typeof options.build === "function" && mode !== "production") {
+    return ReactRouter.of({ build: Option.none(), handle: handleRequest(options, loadBuild) });
+  }
+  const loaded = yield* loadBuild;
+  return ReactRouter.of({
+    build: Option.some(loaded.build),
+    handle: handleRequest(options, Effect.succeed(loaded)),
+  });
+});
+
+/**
+ * Answers the current request with React Router. Route Effects get the
+ * request fiber's context without its scope, so they see the services that
+ * the app's router middleware provides. A route that needs a scope opens its
+ * own with `Effect.scoped`.
+ */
+const handleRequest = (
+  options: ReactRouter.Options,
+  loadBuild: Effect.Effect<LoadedBuild>,
+): ReactRouter["Service"]["handle"] =>
+  Effect.gen(function* () {
+    const httpRequest = yield* HttpServerRequest.HttpServerRequest;
+    const { handler } = yield* loadBuild;
+    const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
+    const controller = new AbortController();
+    const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
+    const routerContext = new RouterContextProvider();
+    routerContext.set(options.factory.handlers.requestContext, fiberContext);
+    routerContext.set(requestSpanKey, exportedSpan(fiberContext));
+    const response = yield* callRouter(handler, request, routerContext, controller);
+    return toHttpResponse(response, controller);
+  }).pipe(
+    // React Router logs and answers the errors of route code. A defect of the
+    // adapter's own steps, such as a build that does not load or React
+    // Router's handler rejecting, goes to the app's loggers, and the client
+    // gets an empty 500, as Express's error handler answers.
     Effect.catchDefect((defect) =>
       Effect.logError("React Router adapter failed", defect).pipe(
         Effect.as(HttpServerResponse.empty({ status: 500 })),

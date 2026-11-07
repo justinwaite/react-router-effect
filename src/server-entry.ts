@@ -2,6 +2,7 @@
 import "./route-data.ts";
 
 export * as ReactRouterHttp from "./server.ts";
+export { ReactRouter } from "./server.ts";
 export type {
   RegisterMismatch,
   RouteEffectCheck,
