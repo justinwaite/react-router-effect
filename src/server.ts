@@ -70,7 +70,8 @@ type BuildSource = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
  * Converts React Router's response. Its `Set-Cookie` values become the
  * response's cookies, as `HttpServerResponse.fromWeb` converts them, so
  * middleware after the adapter can read and change them. Effect keeps one
- * cookie per name, the last one, and only the attributes it knows.
+ * cookie per name, the last one, and only the attributes it knows. A cookie
+ * whose name Effect's parser rejects is dropped, and `handleRequest` logs it.
  *
  * Effect gives a streamed body without a content type
  * `application/octet-stream`, so a route that sends a body sets its own.
@@ -81,6 +82,7 @@ type BuildSource = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
  */
 const toHttpResponse = (
   response: Response,
+  cookies: Cookies.Cookies,
   controller: AbortController,
 ): HttpServerResponse.HttpServerResponse => {
   const headers = new Headers(response.headers);
@@ -90,7 +92,7 @@ const toHttpResponse = (
     status: response.status,
     statusText: response.statusText === "" ? undefined : response.statusText,
     headers,
-    cookies: Cookies.fromSetCookie(response.headers.getSetCookie()),
+    cookies,
   };
   const body = response.body;
   return body === null
@@ -104,6 +106,23 @@ const toHttpResponse = (
         init,
       );
 };
+
+/**
+ * The names of the `Set-Cookie` values that are not in `cookies`, because
+ * Effect's parser rejects them, such as a name with `/` or `:`. A value whose
+ * name another value repeats is not dropped: Effect keeps the last cookie of
+ * each name. Each value is parsed alone only when the counts differ.
+ */
+const droppedCookies = (
+  values: ReadonlyArray<string>,
+  cookies: Cookies.Cookies,
+): ReadonlyArray<string> =>
+  Object.keys(cookies.cookies).length === values.length
+    ? []
+    : values
+        .filter((value) => Cookies.isEmpty(Cookies.fromSetCookie(value)))
+        // The name, for the log only. The value can hold a secret.
+        .map((value) => value.split(/[=;]/, 1)[0]?.trim() ?? "");
 
 // ---------------------------------------------------------------------------
 // Tracing.
@@ -607,7 +626,16 @@ const handleRequest = (
     routerContext.set(handlers.requestContext, fiberContext);
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
-    return toHttpResponse(response, controller);
+    const setCookies = response.headers.getSetCookie();
+    const cookies = Cookies.fromSetCookie(setCookies);
+    const dropped = droppedCookies(setCookies, cookies);
+    if (dropped.length > 0) {
+      yield* Effect.logError(
+        "React Router adapter dropped cookies that Effect cannot send",
+        dropped,
+      );
+    }
+    return toHttpResponse(response, cookies, controller);
   }).pipe(
     // React Router logs and answers the errors of route code. A defect of the
     // adapter's own steps, such as a `loadContext` that dies, a build that

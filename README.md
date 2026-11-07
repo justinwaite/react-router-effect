@@ -543,6 +543,11 @@ Effect keeps one cookie per name and only the attributes it knows: `Max-Age`, `D
 same cookie name twice, for example to expire it on one path and set it on another. Then Effect
 sends only the last one.
 
+Effect accepts only cookie names that are RFC 6265 tokens: letters, digits and
+``!#$%&'*+-.^_`|~``. React Router's `createCookie` and session storages also accept other names,
+such as `app/session` or `user:prefs`. The adapter does not send a cookie with such a name. It logs
+an error with the cookie's name instead. Give every cookie a token name.
+
 ### Content type
 
 Effect gives a streamed body without a content type `application/octet-stream`. A resource route

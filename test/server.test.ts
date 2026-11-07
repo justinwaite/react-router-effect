@@ -103,6 +103,9 @@ const cookieValues = async (name: string | null): Promise<ReadonlyArray<string>>
       return ["s=; Path=/; Max-Age=0", "s=new; Path=/", "other=1; Path=/"];
     case "extension":
       return ["a=1; Path=/", "b=2; Path=/; Custom=x", "c=3; Path=/; Other=y"];
+    case "invalid-name":
+      // React Router's `createCookie` writes these names; Effect's parser rejects them.
+      return ["app/session=1; Path=/", "user:prefs=dark; Path=/", "theme=dark; Path=/"];
     default:
       return [];
   }
@@ -671,6 +674,21 @@ describe("adapter errors", () => {
     expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
       ["Error", "React Router adapter failed"],
       ["Info", "Sent HTTP response"],
+    ]);
+  });
+
+  it("logs the names of the cookies that Effect cannot send, and sends the others", async () => {
+    const served = await start({ build, factory: routeFactory, mode: "test" });
+    logs.length = 0;
+    const response = await fetch(`${served.origin}/cookies?case=invalid-name`);
+    await served.stop();
+    expect(response.headers.getSetCookie()).toEqual(["theme=dark; Path=/"]);
+    expect(logs.map((log) => [log.level, ...log.message])).toEqual([
+      [
+        "Error",
+        "React Router adapter dropped cookies that Effect cannot send",
+        ["app/session", "user:prefs"],
+      ],
     ]);
   });
 
