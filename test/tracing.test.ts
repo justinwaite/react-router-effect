@@ -304,10 +304,10 @@ describe("http.route", () => {
     expect(spanNamed("GET").attributes.get("http.route")).toBe("/posts/:id");
   });
 
-  it("keeps the router's /* for a request that matched no route", async () => {
+  it("keeps the router's * for a request that matched no route", async () => {
     expect((await fetch(`${traced.origin}/missing`)).status).toBe(404);
     await ended();
-    expect(spanNamed("GET").attributes.get("http.route")).toBe("/*");
+    expect(spanNamed("GET").attributes.get("http.route")).toBe("*");
   });
 
   it("gives React Router no hook with the native tracer", async () => {

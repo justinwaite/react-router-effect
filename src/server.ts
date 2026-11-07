@@ -307,7 +307,7 @@ const httpRoute = (pattern: string): string => (pattern.startsWith("/") ? patter
  * Sets `http.route` on the request's span to the pattern of the routes that
  * React Router matched, after React Router answered, also for a page that
  * runs no route function. React Router 8 gives the pattern to a request
- * handler hook. A request that matched no route keeps the router's `/*`.
+ * handler hook. A request that matched no route keeps the router's `*`.
  */
 const routeLabel: ServerInstrumentation = {
   handler(handler) {
@@ -747,12 +747,15 @@ export class ReactRouter extends Context.Service<
 
   /**
    * Registers React Router as the catch-all route of the app's router, for
-   * every method on `/*`. A route that the app registers itself wins over it.
-   * Register it at the root of the router: under a prefix, the router removes
-   * the prefix from the request's URL.
+   * every method on `*`. A route that the app registers itself wins over it,
+   * also a route on `/`, such as the prerendered home page of
+   * `ReactRouterAssets.layer`. Register it at the root of the router: under a
+   * prefix, the router removes the prefix from the request's URL.
    */
   static readonly routes = HttpRouter.use((router) =>
-    Effect.flatMap(ReactRouter, ({ handle }) => router.add("*", "/*", handle)),
+    // Not `/*`: the router also registers `/*` as an exact route on `/`,
+    // which ties with a route on `/` of another layer.
+    Effect.flatMap(ReactRouter, ({ handle }) => router.add("*", "*", handle)),
   );
 }
 

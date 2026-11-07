@@ -82,9 +82,10 @@ const makeHandler = Effect.fnUntraced(function* (options: {
  * with an `index.html`, such as a prerendered page, gets a route that serves
  * its `index.html`, and its path without the trailing slash redirects. The
  * layer serves no path with a segment that starts with a dot, such as
- * `.vite/`, as `express.static` ignores dotfiles. It never registers `/`,
- * which `ReactRouter.routes` registers. Any other request goes on to the
- * app's other routes.
+ * `.vite/`, as `express.static` ignores dotfiles. A root `index.html`, such
+ * as a prerendered home page, gets the route `/`, which wins over the
+ * catch-all of `ReactRouter.routes`. Any other request goes on to the app's
+ * other routes.
  *
  * The layer reads the client build when it builds, so a file that something
  * adds outside the hashed directory later is served after a restart. It
@@ -161,9 +162,12 @@ export const layer: Layer.Layer<
     );
     const directories = files
       .filter((file) => path.basename(file) === indexFile)
-      .map((file) => path.dirname(file))
-      .filter((directory) => directory !== ".");
-    const urls = Arr.appendAll(files, directories).map(urlPath);
+      .map((file) => path.dirname(file));
+    const urls = Arr.appendAll(
+      files.map(urlPath),
+      // The root directory is `.`, whose URL path is `/`.
+      directories.map((directory) => (directory === "." ? "/" : urlPath(directory))),
+    );
 
     const unmatchable = Arr.findFirst(urls, (url) => url.includes("*"));
     if (Option.isSome(unmatchable)) {

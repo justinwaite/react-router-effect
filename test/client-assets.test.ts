@@ -531,15 +531,50 @@ describe("ReactRouterAssets.layer", () => {
     expect(prefixed.headers.get("location")).toBe("/static/prerendered/");
   });
 
-  it("passes the root on to React Router when the client build has an index file", async () => {
+  it("serves the root's index file, such as a prerendered home page, as express.static does", async () => {
     const root = mkdtempSync(join(tmpdir(), "client-assets-root-"));
     writeFileSync(join(root, "index.html"), "<p>home</p>");
     const app = await startApp({ ...options, build: makeBuild({ assetsBuildDirectory: root }) });
-    const response = await fetch(`${app.origin}/`);
-    const text = await response.text();
-    await app.stop();
-    rmSync(root, { recursive: true, force: true });
-    expect(text).toBe("document");
+    try {
+      const get = await fetch(`${app.origin}/`);
+      expect(get.headers.get("cache-control")).toBe("public, max-age=3600");
+      expect(await get.text()).toBe("<p>home</p>");
+      expect(await (await fetch(`${app.origin}/?a=1`)).text()).toBe("<p>home</p>");
+      const head = await fetch(`${app.origin}/`, {
+        method: "HEAD",
+        headers: { "accept-encoding": "identity" },
+      });
+      expect(head.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe("11");
+      // React Router answers a POST on `/` with the document of the root route.
+      const post = await fetch(`${app.origin}/`, {
+        method: "POST",
+        headers: { origin: app.origin },
+      });
+      expect(await post.text()).toBe("document");
+    } finally {
+      await app.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serves the root's index file under the build's publicPath", async () => {
+    const root = mkdtempSync(join(tmpdir(), "client-assets-root-"));
+    writeFileSync(join(root, "index.html"), "<p>home</p>");
+    const app = await startApp({
+      ...options,
+      build: makeBuild({ publicPath: "/static/", assetsBuildDirectory: root }),
+    });
+    try {
+      const redirect = await fetch(`${app.origin}/static`, { redirect: "manual" });
+      expect(redirect.status).toBe(301);
+      expect(redirect.headers.get("location")).toBe("/static/");
+      expect(await (await fetch(`${app.origin}/static/`)).text()).toBe("<p>home</p>");
+      expect(await (await fetch(`${app.origin}/`)).text()).toBe("document");
+    } finally {
+      await app.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("serves a file whose name the URL encodes", async () => {
