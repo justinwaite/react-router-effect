@@ -39,6 +39,7 @@ export const App = Layer.mergeAll(
     ReactRouter.layer({
       build: () => import("virtual:react-router/server-build"),
       factory: routeFactory,
+      mode: import.meta.env.MODE,
     }),
   ),
 );

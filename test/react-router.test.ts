@@ -341,6 +341,21 @@ describe("ReactRouter.layer", () => {
     expect(Option.isNone(result)).toBe(true);
   });
 
+  it("exposes Option.none for a build function in test mode", async () => {
+    const result = await serviceBuild({ build: () => build, factory: routeFactory, mode: "test" });
+    expect(Option.isNone(result)).toBe(true);
+  });
+
+  it("loads a build function once in a mode that React Router runs as production", async () => {
+    // React Router runs in production mode for any mode but development and test.
+    const result = await serviceBuild({
+      build: () => build,
+      factory: routeFactory,
+      mode: "staging",
+    });
+    expect(Option.getOrUndefined(result)).toBe(build);
+  });
+
   it("loads a production build function once for every layer that reads the service", async () => {
     let loads = 0;
     const Live = ReactRouter.layer({

@@ -82,6 +82,7 @@ export const App = Layer.mergeAll(ReactRouter.routes, ReactRouterAssets.layer).p
     ReactRouter.layer({
       build: () => import("virtual:react-router/server-build"),
       factory: routeFactory,
+      mode: import.meta.env.MODE,
     }),
   ),
 );
@@ -300,6 +301,7 @@ export const App = Layer.mergeAll(
     ReactRouter.layer({
       build: () => import("virtual:react-router/server-build"),
       factory: routeFactory,
+      mode: import.meta.env.MODE,
     }),
   ),
 );
@@ -371,9 +373,11 @@ The layers:
 - `ReactRouter.layer(options)` provides the `ReactRouter` service. Its options are these:
   - `build` is the server build, or a function that loads it.
   - `factory` is the route factory.
-  - `mode` is React Router's server mode. The default is `process.env.NODE_ENV`. At layer build, the
-    layer loads a build value once, or a build function in production mode. Any other build loads
-    for each request.
+  - `mode` is React Router's server mode, and you must give it. In a Vite app, pass
+    `import.meta.env.MODE`. React Router runs in production mode for any mode but `development`
+    and `test`, and so does the layer. At layer build, the layer loads a build value once, or a
+    build function in production mode. In `development` and `test`, a build function loads for
+    each request.
   - `loadContext` makes React Router's load context for each request. Read
     [The load context](#the-load-context).
 - `ReactRouter.routes` registers React Router as the catch-all route on `*`.
@@ -396,6 +400,7 @@ Effect context. So give route Effects services with router middleware, not with 
 ReactRouter.layer({
   build: () => import("virtual:react-router/server-build"),
   factory: routeFactory,
+  mode: import.meta.env.MODE,
   loadContext: (request) =>
     Effect.sync(() => {
       const context = new RouterContextProvider();
@@ -435,6 +440,7 @@ export const App = Layer.mergeAll(
     ReactRouter.layer({
       build: () => import("virtual:react-router/server-build"),
       factory: routeFactory,
+      mode: import.meta.env.MODE,
     }),
   ),
 );

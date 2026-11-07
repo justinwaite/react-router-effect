@@ -354,7 +354,7 @@ interface LoadedBuild {
  */
 const makeBuildLoader = (
   options: Pick<ReactRouter.Options, "build" | "factory">,
-  mode: string | undefined,
+  mode: string,
   instrumentations: ReadonlyArray<ServerInstrumentation>,
 ): Effect.Effect<LoadedBuild> => {
   let cached: LoadedBuild | undefined;
@@ -436,6 +436,7 @@ const routeMethods = Arr.filter(HttpMethod.all, (method) => method !== "HEAD");
  *     ReactRouter.layer({
  *       build: () => import("virtual:react-router/server-build"),
  *       factory: routeFactory,
+ *       mode: import.meta.env.MODE,
  *     }),
  *   ),
  * );
@@ -495,8 +496,13 @@ export declare namespace ReactRouter {
     readonly build: BuildSource;
     /** The route factory whose runner, runtime and error model route Effects use. */
     readonly factory: { readonly handlers: RouteHandlers };
-    /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
-    readonly mode?: string | undefined;
+    /**
+     * React Router's server mode, such as `import.meta.env.MODE` in a Vite
+     * app. React Router runs in production mode for any mode but
+     * `development` and `test`, and so does the layer: it loads a build
+     * function for each request only in those two modes.
+     */
+    readonly mode: "development" | "production" | "test" | (string & {});
     /**
      * Makes React Router's load context for each request, as `getLoadContext`
      * does for `@react-router/express`. Plain loaders and actions, and
@@ -522,7 +528,7 @@ export declare namespace ReactRouter {
  * when its value changes.
  */
 const makeReactRouter = Effect.fnUntraced(function* <R>(options: ReactRouter.Options<R>) {
-  const mode = options.mode ?? process.env.NODE_ENV;
+  const mode = options.mode;
   // The tracer of the layer. With the native tracer, whose spans go
   // nowhere, React Router gets no hook, and does no work for it on a request.
   const tracer = yield* Effect.tracer;
@@ -543,7 +549,8 @@ const makeReactRouter = Effect.fnUntraced(function* <R>(options: ReactRouter.Opt
           Effect.updateContext(loadContext(request), (requestContext: Context.Context<never>) =>
             Context.merge(services, requestContext),
           );
-  if (typeof options.build === "function" && mode !== "production") {
+  // React Router runs in production mode for any mode but these two.
+  if (typeof options.build === "function" && (mode === "development" || mode === "test")) {
     return ReactRouter.of({
       build: Option.none(),
       handle: handleRequest(handlers, loadBuild, provided),
