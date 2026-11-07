@@ -1,7 +1,7 @@
 # react-router-effect
 
 Serve a [React Router](https://reactrouter.com) framework-mode app from [Effect](https://effect.website)'s
-Node HTTP server, and write its loaders, actions and middleware as Effects.
+HTTP router, on Node or on Cloudflare Workers. Write its loaders, actions and middleware as Effects.
 
 A route function that returns an `Effect` runs with your app's services. When it fails with a tagged
 error, the route factory you configure once decides what happens: recover with data for
@@ -24,17 +24,21 @@ If your app does not serve React Router from an Effect HTTP server, read
 
 ## Install
 
+On Node:
+
 ```bash
-vp add react-router-effect effect @effect/platform-node
+vp add react-router-effect effect react-router @effect/platform-node
 ```
 
-`effect`, `@effect/platform-node` and `react-router` are peer dependencies. The library requires
-Effect 4.1 (`effect@^4.1.0`). Only `react-router-effect/vite` imports `@effect/platform-node`.
+`effect`, `react-router` and `@effect/platform-node` are peer dependencies. The library requires
+Effect 4.1 (`effect@^4.1.0`) and Node 22 or later. Only `react-router-effect/vite` imports
+`@effect/platform-node`, so another platform does not need it. The README of each example lists the
+packages of its platform. Read [Platforms](#platforms).
 
 ## Get started
 
-[`examples/node`](examples/node) is an app with these files. It also has development with
-Vite, tests against the production build, and benchmarks.
+These steps serve an app on Node in production. [`examples/node`](examples/node) is an app with
+these files. It also has development with Vite, tests against the production build, and benchmarks.
 
 ### 1. Create the route factory
 
@@ -90,10 +94,9 @@ export const App = Layer.mergeAll(ReactRouter.routes, ReactRouterAssets.layer).p
 
 ### 3. Serve it
 
-`server.js` serves `App` with `HttpRouter.serve`, which also logs each request. It is the only file
-that does not reload in development. When the server starts in production, `App` loads the build and
-reads the client build. If the server cannot read the client build, it fails to start with a
-`ClientBuildError` that names the resolved directory.
+`server.js` serves `App` with `HttpRouter.serve`, which also logs each request. When the server
+starts, `App` loads the build and reads the client build. If the server cannot read the client
+build, it fails to start with a `ClientBuildError` that names the resolved directory.
 
 ```js
 // server.js
@@ -104,17 +107,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { Layer } from "effect";
 import { HttpRouter } from "effect/http";
 
-const App =
-  process.env.NODE_ENV === "development"
-    ? await (async () => {
-        const { createServer: createVite } = await import("vite");
-        const { ReactRouterVite } = await import("react-router-effect/vite");
-        const vite = await createVite({ server: { middlewareMode: true } });
-        return ReactRouterVite.layer(vite, () =>
-          vite.ssrLoadModule("./server/app.ts").then((module) => module.App),
-        );
-      })()
-    : (await import("./build/server/index.js")).App;
+import { App } from "./build/server/index.js";
 
 NodeRuntime.runMain(
   Layer.launch(
@@ -146,7 +139,8 @@ react-router build
 NODE_ENV=production node server.js
 ```
 
-For development, read [Development with Vite](#development-with-vite).
+For development with Vite, the Node example's `server.js` serves the app through
+`ReactRouterVite.layer`. Read [Development with Vite](examples/node/README.md#development-with-vite).
 
 ### 5. Write routes as Effects
 
@@ -182,6 +176,28 @@ export const action = Effect.fn("action.todos")(function* ({
 middleware](#plain-effect-loaders-actions-and-middleware) explains why. A route function that does
 not return an Effect passes through to React Router unchanged, so promise loaders keep working in
 the same app.
+
+## Platforms
+
+`App` is the same layer on every platform. Only the file that serves it changes. Effect has two
+functions that serve it:
+
+- `HttpRouter.serve(App)` with a server layer, such as `NodeHttpServer.layer` on Node.
+- `HttpRouter.toWebHandler(App)`, which returns a fetch handler, such as a Cloudflare Worker's.
+
+| Platform           | Example                                      | Serves `App` with                             |
+| ------------------ | -------------------------------------------- | --------------------------------------------- |
+| Node               | [`examples/node`](examples/node)             | `HttpRouter.serve` and `NodeHttpServer.layer` |
+| Cloudflare Workers | [`examples/cloudflare`](examples/cloudflare) | `HttpRouter.toWebHandler`                     |
+
+The README of each example has the details of its platform. These rules apply on every platform:
+
+- App-wide services go in the route factory's `runtime`. Read
+  [App-wide services with a runtime](#app-wide-services-with-a-runtime).
+- Per-request services go in a router middleware. Read [Per-request services](#per-request-services).
+- A platform service, such as a tracer, goes where the serve function reads it. `HttpRouter.serve`
+  reads the services that `Layer.provide` gives to its layer. `HttpRouter.toWebHandler` reads the
+  services that `Layer.provideMerge` adds to the layer that it gets.
 
 ## Handle errors
 
@@ -353,12 +369,16 @@ router middleware or an effect middleware, as this section shows.
 
 ## The adapter
 
-`react-router-effect/server` is a React Router adapter for Effect's HTTP router, on Effect's Node
-HTTP server (`@effect/platform-node`). It is the Effect counterpart of `@react-router/express`. It
+`react-router-effect/server` is a React Router adapter for Effect's HTTP router, on every platform
+that the router runs on. It is the Effect counterpart of `@react-router/express`. It
 handles everything between an `HttpServerRequest` and React Router. That is the Web `Request` and
 its abort signal, the route factory, and the client build. It also converts React Router's
 `Response`, with its streamed body and its cookies. The app keeps its own server, middleware and
 routes.
+
+The adapter's API is unstable, and a minor version can change it. Every export of
+`react-router-effect/server` and `react-router-effect/vite` has the JSDoc tag `@stability unstable`.
+The route factory and the other exports of `react-router-effect` are stable.
 
 React Router keeps doing what it does for any other server adapter: documents, `.data` requests,
 streamed promises, resource routes, the lazy route manifest and middleware. Before React Router
@@ -383,8 +403,8 @@ The layers:
 - `ReactRouter.routes` registers React Router as the catch-all route on `*`.
 - `ReactRouterAssets.layer` registers the files of the client build. Read
   [The client build](#the-client-build).
-- `ReactRouterVite.layer`, from `react-router-effect/vite`, serves the app in development. Read
-  [Development with Vite](#development-with-vite).
+- `ReactRouterVite.layer`, from `react-router-effect/vite`, serves the app in development on Node.
+  Read [Development with Vite](examples/node/README.md#development-with-vite).
 
 Provide one value of `ReactRouter.layer` to every layer that reads the service, as `App` does with
 `Layer.provide`. Two values load the build twice.
@@ -462,9 +482,8 @@ These rules apply to the routes:
 - React Router's route takes the methods of `HttpMethod.all`: GET, POST, PUT, DELETE, PATCH,
   OPTIONS, TRACE and QUERY, and HEAD through GET. A request with another method, such as PROPFIND,
   gets a 404 from the router.
-- Register `ReactRouter.routes` at the root of the router. Under a prefix, the router removes the
-  prefix from the request's URL, and React Router gets the wrong path. To serve the app under a
-  path, set React Router's `basename`.
+- Register `ReactRouter.routes` at the root of the router. Under a prefix, React Router does not
+  get the path that it expects. To serve the app under a path, set React Router's `basename`.
 - The router ignores the case of the path. On a file system that is case-sensitive, a request for a
   file with the wrong case matches the file's route and gets a 404.
 
@@ -472,7 +491,8 @@ These rules apply to the routes:
 
 `ReactRouterAssets.layer` serves `build.assetsBuildDirectory` under `build.publicPath`, as the two
 `express.static` lines of React Router's Express template do. It needs the platform's file system,
-which `NodeHttpServer.layer` provides.
+which `NodeHttpServer.layer` provides. A Cloudflare Worker serves the client build from its static
+assets, and does not use this layer.
 
 - The hashed directory is the directory of the build's manifest URL, such as `/assets`. React
   Router's build writes files with a content hash in their names there. The layer caches them for a
@@ -496,52 +516,18 @@ which `NodeHttpServer.layer` provides.
 
 ### Requests
 
-The Web request comes from `HttpServerRequest.toWeb`, body included. If a request sends
-`Expect: 100-continue`, Effect's stream sends the `100 Continue` at the moment React Router reads
-the body.
-
-The request URL is the one that Effect derives from the request: its path, its `host` header and its
-protocol. An app behind a proxy applies the headers that it trusts with
-`HttpMiddleware.xForwardedHeaders`, as a server middleware or a global router middleware. Both run
-before the router reads the request. `HttpMiddleware.tracer` runs outside the server middleware, so
-its span has the request before the change.
-
-Behind a chain of proxies, React Router can expect a different host and scheme than
-`xForwardedHeaders` gives. If `X-Forwarded-Host` or `X-Forwarded-Proto` does not have one value for
-each `X-Forwarded-For` entry, `xForwardedHeaders` ignores that header. Express takes the first value
-of each header. If your app is behind a proxy, make sure that the correct headers reach the server.
+The Web request comes from `HttpServerRequest.toWeb`, body included. On Effect's Node server, the
+request has the changes that middleware makes to the `HttpServerRequest`, such as the headers of
+`HttpMiddleware.xForwardedHeaders`. On a Web server, such as a Cloudflare Worker, React Router gets
+the runtime's own request. The README of each example describes the requests of its platform.
 
 If the client leaves while React Router runs or while the body streams, the response ends early, and
-the request signal aborts. A completed response never aborts it.
-
-Effect's Node server writes the head of a streamed response with its first chunk. So an
-`EventSource` client sees the response open at the first event, and not at the return of the route.
+the request signal aborts. A completed response never aborts it. On Cloudflare Workers, this needs
+the `enable_request_signal` compatibility flag.
 
 React Router logs and answers the errors of route code. If the adapter's own steps fail, for example
 a `loadContext` that dies, the adapter logs the error with `Effect.logError`. Then it answers an
 empty 500. The log goes to the loggers of the app's Effect runtime.
-
-### Development with Vite
-
-In development, Vite serves the client and loads the server code. `ReactRouterVite.layer(vite,
-loadApp)`, from `react-router-effect/vite`, passes each request to Vite first. For a request that
-Vite passes on, it calls `loadApp` and serves the request with the `App` that `loadApp` returns. The
-`server.js` of [Serve it](#3-serve-it) uses it.
-
-Load `server/app.ts` with `vite.ssrLoadModule`. Then the route modules, the factory and the adapter
-share Vite's module graph. When `loadApp` returns a new `App` value, after an edit, the layer builds
-the new `App` and closes the old one. Concurrent requests share one build.
-
-- A defect, such as a Vite error or an `App` that fails to build, goes to the app's loggers, and the
-  client gets an empty 500. Before that, the layer calls `vite.ssrFixStacktrace`, so the stack shows
-  your source files.
-- The `routerConfig` option of `HttpRouter.serve` applies to the server's router only. In
-  development, the `App` has its own router, with the default configuration.
-- Vite's middleware takes Node requests, so the layer needs Effect's Node HTTP server.
-- Keep the websocket of Vite's HMR (hot module replacement) on its own port. The port is 24678 by
-  default, and `server.ws.port` sets another one. Do not give Vite the app's Node server with
-  `server.ws.server`, or with its older name `server.hmr.server`. Effect's Node server runs the app
-  for every upgrade request, and the app's response closes Vite's websocket.
 
 ### Cookies
 
@@ -572,23 +558,10 @@ return new Response(Readable.toWeb(file) as ReadableStream, {
 ### Tracing
 
 When the request has a server span, the adapter traces React Router. If the app provides a tracer
-that exports spans, such as `OtelTracer`, Effect's HTTP server makes the server span. Provide the
-tracer to the layer that calls `HttpRouter.serve`, in `server.js`:
-
-```js
-NodeRuntime.runMain(
-  Layer.launch(
-    HttpRouter.serve(App).pipe(
-      Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
-      // The app's tracer layer, such as an `OtelTracer` layer from `@effect/opentelemetry`.
-      Layer.provide(TracerLive),
-    ),
-  ),
-);
-```
-
-Effect's server runs each request with the services of that layer. A tracer that only `App`
-provides makes no server span, so the adapter adds no spans.
+that exports spans, such as `OtelTracer`, Effect's HTTP server makes the server span. Give the
+tracer where the serve function reads it, as [Platforms](#platforms) tells. Effect serves each
+request with the services of that layer. A tracer that the serve function does not read makes no
+server span, so the adapter adds no spans. The README of each example shows where its tracer goes.
 
 Each middleware, loader and action runs in a span of its own, such as
 `react-router.loader routes/todos`.
@@ -849,12 +822,12 @@ export const loader = makeLoader(() =>
   effect context.
 - `EffectRouteArgs<Args>`, `EffectMiddlewareArgs<Middleware>`, `RouteData<F>` and `Register` are the
   types of plain Effect routes.
-- `react-router-effect/server` exports `ReactRouter`, with `ReactRouter.layer`, `ReactRouter.routes`
+- `react-router-effect/server` (unstable) exports `ReactRouter`, with `ReactRouter.layer`, `ReactRouter.routes`
   and the `ReactRouter.Options` type, and `ReactRouterAssets`, with `ReactRouterAssets.layer` and
   `ReactRouterAssets.ClientBuildError`. It also exports the types `RouteEffectCheck` and
   `RouteEffectFailures`.
-- `react-router-effect/vite` exports `ReactRouterVite.layer` and the `ReactRouterVite.ViteDevServer`
-  type, for development. It needs `@effect/platform-node`.
+- `react-router-effect/vite` (unstable) exports `ReactRouterVite.layer` and the `ReactRouterVite.ViteDevServer`
+  type, for development on Node. It needs `@effect/platform-node`.
 
 ## Development
 

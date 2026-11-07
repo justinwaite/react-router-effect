@@ -1,8 +1,9 @@
-# Example: React Router on the Effect HTTP server
+# Example: React Router on Node
 
-A React Router framework-mode app served by `react-router-effect` on Effect's Node HTTP server. It
-is the package's reference app: its tests run against the production build, and its benchmarks
-measure the adapter against React Router's own servers.
+A React Router framework-mode app served by `react-router-effect` on Effect's Node HTTP server. Its
+tests run against the production build, and its benchmarks measure the adapter against React
+Router's own servers. The [Cloudflare example](../cloudflare) serves the same kind of `App` from a
+Worker.
 
 ```sh
 vp install              # in the repository root
@@ -33,6 +34,80 @@ node bench/http.ts      # load over HTTP, against Express and @react-router/node
 
 The adapter is the boundary to React Router: everything React Router needs, the app does not write.
 The app owns the HTTP server and its middleware.
+
+## Development with Vite
+
+In development, Vite serves the client and loads the server code. `ReactRouterVite.layer(vite,
+loadApp)`, from `react-router-effect/vite`, passes each request to Vite first. For a request that
+Vite passes on, it calls `loadApp` and serves the request with the `App` that `loadApp` returns.
+`server.js` uses it, and it is the only file that does not reload in development:
+
+```js
+const App =
+  process.env.NODE_ENV === "development"
+    ? await (async () => {
+        const { createServer: createVite } = await import("vite");
+        const { ReactRouterVite } = await import("react-router-effect/vite");
+        const vite = await createVite({ server: { middlewareMode: true } });
+        return ReactRouterVite.layer(vite, () =>
+          vite.ssrLoadModule("./server/app.ts").then((module) => module.App),
+        );
+      })()
+    : (await import("./build/server/index.js")).App;
+```
+
+Load `server/app.ts` with `vite.ssrLoadModule`. Then the route modules, the factory and the adapter
+share Vite's module graph. When `loadApp` returns a new `App` value, after an edit, the layer builds
+the new `App` and closes the old one. Concurrent requests share one build.
+
+- A defect, such as a Vite error or an `App` that fails to build, goes to the app's loggers, and the
+  client gets an empty 500. Before that, the layer calls `vite.ssrFixStacktrace`, so the stack shows
+  your source files.
+- The `routerConfig` option of `HttpRouter.serve` applies to the server's router only. In
+  development, the `App` has its own router, with the default configuration.
+- Vite's middleware takes Node requests, so the layer needs Effect's Node HTTP server.
+- Keep the websocket of Vite's HMR (hot module replacement) on its own port. The port is 24678 by
+  default, and `server.ws.port` sets another one. Do not give Vite the app's Node server with
+  `server.ws.server`, or with its older name `server.hmr.server`. Effect's Node server runs the app
+  for every upgrade request, and the app's response closes Vite's websocket.
+
+## Requests on Effect's Node server
+
+If a request sends `Expect: 100-continue`, Effect's stream sends the `100 Continue` at the moment
+React Router reads the body.
+
+The request URL is the one that Effect derives from the request: its path, its `host` header and its
+protocol. An app behind a proxy applies the headers that it trusts with
+`HttpMiddleware.xForwardedHeaders`, as a server middleware or a global router middleware. Both run
+before the router reads the request. `HttpMiddleware.tracer` runs outside the server middleware, so
+its span has the request before the change.
+
+Behind a chain of proxies, React Router can expect a different host and scheme than
+`xForwardedHeaders` gives. If `X-Forwarded-Host` or `X-Forwarded-Proto` does not have one value for
+each `X-Forwarded-For` entry, `xForwardedHeaders` ignores that header. Express takes the first value
+of each header. If your app is behind a proxy, make sure that the correct headers reach the server.
+
+Effect's Node server writes the head of a streamed response with its first chunk. So an
+`EventSource` client sees the response open at the first event, and not at the return of the route.
+
+## Tracing
+
+Provide the tracer to the layer that calls `HttpRouter.serve`, in `server.js`:
+
+```js
+NodeRuntime.runMain(
+  Layer.launch(
+    HttpRouter.serve(App).pipe(
+      Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
+      // The app's tracer layer, such as an `OtelTracer` layer from `@effect/opentelemetry`.
+      Layer.provide(TracerLive),
+    ),
+  ),
+);
+```
+
+Effect's Node server runs each request with the services of that layer. A tracer that only `App`
+provides makes no server span, so the adapter adds no spans.
 
 ## Benchmarks
 
