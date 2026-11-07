@@ -1,13 +1,13 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Effect, Layer, ManagedRuntime, Option, Tracer } from "effect";
-import { HttpMiddleware, HttpServer } from "effect/http";
-import type { ServerBuild } from "react-router";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { Effect, Layer, ManagedRuntime, Option, Predicate, Tracer } from "effect";
+import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
+import { RouterContextProvider, type ServerBuild } from "react-router";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
-import * as ReactRouterHttp from "../src/server.ts";
+import { ReactRouter } from "../src/server.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures: a tracer that records its spans, and a build with nested middleware.
@@ -27,7 +27,15 @@ const recordingTracer = Tracer.make({
 const routeFactory = makeEffectRouteFactory()((Respond) => ({ respond: Respond }));
 const { Respond } = routeFactory;
 
-const route = (id: string, path: string, module: Record<string, unknown>) => ({
+/** A route of a fixture build, as the build plugin collects its exports. */
+interface FixtureRoute {
+  readonly id: string;
+  readonly path: string;
+  readonly parentId?: string;
+  readonly module: Record<string, unknown>;
+}
+
+const route = (id: string, path: string, module: Record<string, unknown>): FixtureRoute => ({
   id,
   path,
   parentId: "root",
@@ -79,8 +87,13 @@ const routes = {
   }),
 };
 
-const build: ServerBuild = {
-  entry: { module: { default: () => new Response("document", { status: 200 }) } },
+/** A server build of `routes`, with the assets manifest that the build plugin writes for them. */
+const buildOf = (routes: Record<string, FixtureRoute>): ServerBuild => ({
+  entry: {
+    module: {
+      default: (_request: Request, status: number) => new Response("document", { status }),
+    },
+  },
   routes: routes as unknown as ServerBuild["routes"],
   assets: {
     entry: { imports: [], module: "/entry.client.js" },
@@ -90,7 +103,7 @@ const build: ServerBuild = {
         {
           id: r.id,
           path: r.path,
-          parentId: "parentId" in r ? r.parentId : undefined,
+          parentId: r.parentId,
           module: `/${r.id}.js`,
           hasAction: true,
           hasLoader: true,
@@ -115,16 +128,20 @@ const build: ServerBuild = {
   isSpaMode: false,
   prerender: [],
   routeDiscovery: { mode: "initial", manifestPath: "/__manifest" },
-};
+});
 
-const app = ReactRouterHttp.make({ build, factory: routeFactory, mode: "test" });
+const build = buildOf(routes);
+
+const App = ReactRouter.routes.pipe(
+  Layer.provide(ReactRouter.layer({ build, factory: routeFactory, mode: "test" })),
+);
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;
 let origin = "";
 
 beforeAll(async () => {
   runtime = ManagedRuntime.make(
-    Layer.unwrap(Effect.map(app, (served) => HttpServer.serve(served))).pipe(
+    HttpRouter.serve(App, { disableLogger: true, disableListenLog: true }).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
       Layer.provide(Layer.succeed(Tracer.Tracer)(recordingTracer)),
       // Records the `set-cookie` response header on the server span, which is opt-in.
@@ -240,5 +257,74 @@ describe("spans", () => {
     expect((await fetch(`${origin}/cookies`)).headers.getSetCookie()).toHaveLength(2);
     await ended();
     expect(spanNamed("GET").attributes.has("http.response.header.set-cookie")).toBe(false);
+  });
+});
+
+describe("http.route", () => {
+  /** Routes that run no route function, so only React Router's pattern names them. */
+  const App = ReactRouter.routes.pipe(
+    Layer.provide(
+      ReactRouter.layer({
+        build: buildOf({
+          root: { id: "root", path: "", module: { default: () => null } },
+          post: route("post", "posts/:id", { default: () => null }),
+        }),
+        factory: routeFactory,
+        mode: "test",
+      }),
+    ),
+  );
+
+  /** Serves `App` with `tracer`, and returns its origin and how to stop it. */
+  const start = async (tracer: Tracer.Tracer) => {
+    const runtime = ManagedRuntime.make(
+      HttpRouter.serve(App, { disableLogger: true, disableListenLog: true }).pipe(
+        Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+        Layer.provide(Layer.succeed(Tracer.Tracer)(tracer)),
+      ),
+    );
+    const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
+    if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    return { origin: `http://localhost:${address.port}`, stop: () => runtime.dispose() };
+  };
+
+  let traced: Awaited<ReturnType<typeof start>>;
+  let untraced: Awaited<ReturnType<typeof start>>;
+
+  beforeAll(async () => {
+    traced = await start(recordingTracer);
+    untraced = await start(Tracer.nativeTracer);
+  });
+
+  afterAll(() => Promise.all([traced.stop(), untraced.stop()]));
+
+  it("sets the pattern of a page that runs no route function", async () => {
+    expect((await fetch(`${traced.origin}/posts/1`)).status).toBe(200);
+    await ended();
+    expect(spanNamed("GET").attributes.get("http.route")).toBe("/posts/:id");
+  });
+
+  it("keeps the router's * for a request that matched no route", async () => {
+    expect((await fetch(`${traced.origin}/missing`)).status).toBe(404);
+    await ended();
+    expect(spanNamed("GET").attributes.get("http.route")).toBe("*");
+  });
+
+  it("gives React Router no hook with the native tracer", async () => {
+    // React Router stores the matched pattern of a request in its context
+    // only when the build has a request handler hook.
+    const set = vi.spyOn(RouterContextProvider.prototype, "set");
+    const storedPatterns = () =>
+      set.mock.calls.filter(([, value]) => Predicate.hasProperty(value, "pattern")).length;
+    try {
+      await fetch(`${untraced.origin}/posts/1`);
+      const untracedPatterns = storedPatterns();
+      set.mockClear();
+      await fetch(`${traced.origin}/posts/1`);
+      await ended();
+      expect([untracedPatterns, storedPatterns()]).toEqual([0, 1]);
+    } finally {
+      set.mockRestore();
+    }
   });
 });

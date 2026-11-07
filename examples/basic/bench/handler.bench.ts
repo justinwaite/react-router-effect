@@ -13,8 +13,8 @@ import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createRequestListener } from "@react-router/node";
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { HttpServer } from "effect/http";
+import { Layer, ManagedRuntime } from "effect";
+import { HttpRouter, HttpServer } from "effect/http";
 import { afterAll, expect, test } from "vite-plus/test";
 
 import { baselineBuild, baselineContext, cases, loadServer } from "./servers.ts";
@@ -25,9 +25,9 @@ if (process.env.NODE_ENV !== "production") {
 
 const server = await loadServer();
 
-/** The adapter on Effect's Node HTTP server, on a free port. */
+/** The adapter: the example's `App` on Effect's Node HTTP server, on a free port. */
 const adapterRuntime = ManagedRuntime.make(
-  Layer.unwrap(Effect.map(server.reactRouterApp, (app) => HttpServer.serve(app))).pipe(
+  HttpRouter.serve(server.App, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
   ),
 );

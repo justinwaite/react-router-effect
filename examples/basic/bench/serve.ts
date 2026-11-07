@@ -3,7 +3,7 @@
  * <adapter|express|node> <port>`. None logs requests or compresses, so the
  * servers differ only in how they serve React Router.
  *
- * - `adapter`: `reactRouterApp` on Effect's Node HTTP server, serving the
+ * - `adapter`: the example's `App` on Effect's Node HTTP server, serving the
  *   client build and React Router.
  * - `express`: React Router's custom server template: Express with
  *   `express.static` for the client build, and `@react-router/express`.
@@ -30,10 +30,9 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { createRequestHandler } from "@react-router/express";
 import { createRequestListener } from "@react-router/node";
 import { Effect, Layer } from "effect";
-import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import express from "express";
 import { createRequestHandler as createRouterHandler } from "react-router";
-import type { ReactRouterHttp } from "react-router-effect/server";
 
 import { baselineBuild, baselineContext, floorBody, loadServer } from "./servers.ts";
 
@@ -52,50 +51,44 @@ const expressWithStatic = () => {
   return app;
 };
 
-/** Makes an Effect HTTP app and serves it on Effect's Node HTTP server until SIGTERM. */
+/** Effect's Node HTTP server on the port. */
+const nodeServer = NodeHttpServer.layer(() => Http.createServer(), { port: Number(port) });
+
+/** Serves an Effect HTTP app on Effect's Node HTTP server until SIGTERM. */
 const serveEffect = (
-  make: Effect.Effect<
-    Effect.Effect<
-      HttpServerResponse.HttpServerResponse,
-      unknown,
-      HttpServerRequest.HttpServerRequest
-    >,
+  app: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
     unknown,
-    ReactRouterHttp.ClientAssetServices
+    HttpServerRequest.HttpServerRequest
   >,
-) =>
-  NodeRuntime.runMain(
-    Layer.launch(
-      Layer.unwrap(Effect.map(make, (app) => HttpServer.serve(app))).pipe(
-        Layer.provide(NodeHttpServer.layer(() => Http.createServer(), { port: Number(port) })),
-      ),
-    ),
-  );
+) => NodeRuntime.runMain(Layer.launch(HttpServer.serve(app).pipe(Layer.provide(nodeServer))));
 
 switch (kind) {
   case "adapter": {
-    serveEffect(server.reactRouterApp);
+    NodeRuntime.runMain(
+      Layer.launch(
+        HttpRouter.serve(server.App, { disableLogger: true, disableListenLog: true }).pipe(
+          Layer.provide(nodeServer),
+        ),
+      ),
+    );
     break;
   }
   case "effect-minimal": {
     const handler = createRouterHandler(await baselineBuild(server), "production");
     serveEffect(
-      Effect.succeed(
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const web = yield* HttpServerRequest.toWeb(request);
-          const context = baselineContext(server, request.headers["x-request-id"]);
-          return HttpServerResponse.fromWeb(yield* Effect.promise(() => handler(web, context)));
-        }),
-      ),
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const web = yield* HttpServerRequest.toWeb(request);
+        const context = baselineContext(server, request.headers["x-request-id"]);
+        return HttpServerResponse.fromWeb(yield* Effect.promise(() => handler(web, context)));
+      }),
     );
     break;
   }
   case "effect-floor": {
     serveEffect(
-      Effect.succeed(
-        Effect.succeed(HttpServerResponse.text(floorBody, { contentType: "text/x-script" })),
-      ),
+      Effect.succeed(HttpServerResponse.text(floorBody, { contentType: "text/x-script" })),
     );
     break;
   }

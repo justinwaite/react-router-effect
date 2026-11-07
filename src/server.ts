@@ -23,25 +23,26 @@
  * @since 2.1.0
  */
 import {
+  Array as Arr,
   Cause,
   Context,
-  Data,
   Effect,
   Exit,
-  FileSystem,
+  Layer,
   Option,
-  Path,
+  Record,
   Scope,
   Stream,
+  Struct,
   Tracer,
 } from "effect";
 import {
   Cookies,
-  type HttpPlatform,
+  HttpMethod,
+  HttpRouter,
   HttpServerError,
   HttpServerRequest,
   HttpServerResponse,
-  HttpStaticServer,
 } from "effect/http";
 import {
   createContext,
@@ -49,50 +50,14 @@ import {
   RouterContextProvider,
   type RouterContext,
   type ServerBuild,
+  type ServerInstrumentation,
   type MiddlewareFunction,
 } from "react-router";
 
 import type { RouteHandlers } from "./factory.ts";
 
-// ---------------------------------------------------------------------------
-// Options.
-// ---------------------------------------------------------------------------
-
 /** A React Router server build, or a function that loads it, as in `createRequestHandler`. */
-export type BuildSource = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
-
-/** The options of {@link make}. */
-export interface Options {
-  /** The server build: `() => import("virtual:react-router/server-build")`. */
-  readonly build: BuildSource;
-  /** The route factory whose runner, runtime and error model route Effects use. */
-  readonly factory: { readonly handlers: RouteHandlers };
-  /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
-  readonly mode?: string | undefined;
-  /**
-   * Serves the client build before React Router: the files of the build's
-   * `assetsBuildDirectory`, under its `publicPath`. Files under `assets/` have
-   * hashed names and are cached for a year as immutable, other files for an
-   * hour. It serves like `express.static`: a directory serves its index file,
-   * such as a prerendered page, its path without the trailing slash redirects
-   * to the path with it, dotfiles are not served, and a request it does not
-   * serve goes to React Router. Like `express.static`, it looks each GET and
-   * HEAD request up in the file system. It serves only a build that it loads
-   * once: in production mode, or a build value. A
-   * development build is never served, since Vite serves the client there, nor
-   * is a `publicPath` on another origin. Making the app fails with a
-   * {@link ClientBuildError} when it cannot read the directory. Needs the
-   * platform's file system, which `NodeHttpServer.layer` and the other server
-   * layers provide.
-   */
-  readonly clientAssets?: boolean | undefined;
-  /**
-   * Builds the services of one request, before React Router runs. They join
-   * the request's effect context, so every middleware, loader and action sees
-   * them without a middleware that sets them.
-   */
-  readonly requestContext?: ((request: Request) => Context.Context<never>) | undefined;
-}
+type BuildSource = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
 
 // ---------------------------------------------------------------------------
 // Response conversion.
@@ -138,134 +103,6 @@ const toHttpResponse = (
 };
 
 // ---------------------------------------------------------------------------
-// Client assets.
-// ---------------------------------------------------------------------------
-
-/** The services that serving the client build needs. */
-export type ClientAssetServices = FileSystem.FileSystem | Path.Path | HttpPlatform.HttpPlatform;
-
-/** The `Cache-Control` of the files under `assets/`, whose names include a content hash. */
-const hashedCacheControl = "public, max-age=31536000, immutable";
-
-/** The `Cache-Control` of the other client files, such as `favicon.ico`. */
-const otherCacheControl = "public, max-age=3600";
-
-/** Serves files of one directory, for the current request. */
-type StaticFiles = Effect.Effect<
-  HttpServerResponse.HttpServerResponse,
-  HttpServerError.HttpServerError,
-  HttpServerRequest.HttpServerRequest
->;
-
-/** The client build of one server build. */
-interface ClientFiles {
-  /** The `publicPath` without its trailing slash. */
-  readonly prefix: string;
-  readonly hashed: StaticFiles;
-  readonly other: StaticFiles;
-}
-
-/**
- * True for a path with a segment that starts with a dot, such as `.vite/`,
- * which is never served. Effect's static server serves dotfiles, and Vite
- * writes its manifest there. `express.static` ignores them.
- */
-const hasDotSegment = (path: string): boolean =>
-  path.split("/").some((segment) => segment.startsWith("."));
-
-/** True when a static lookup found no file, so the request goes on to React Router. */
-const isNotFound = (error: HttpServerError.HttpServerError): boolean =>
-  error.reason._tag === "RouteNotFound";
-
-/**
- * The app serves the client build, and cannot read its directory. The
- * build's `assetsBuildDirectory` is relative to the working directory of the
- * server, so `directory` is the path it resolved to.
- */
-export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
-  readonly message: string;
-  /** The resolved directory of the client build. */
-  readonly directory: string;
-  readonly cause: unknown;
-}> {}
-
-/**
- * The client files of a build, or `undefined` when the adapter does not serve
- * them. Making them reads the build's directory, so a missing client build
- * fails the server's start and not its requests.
- */
-const makeClientFiles = (
-  build: ServerBuild,
-): Effect.Effect<ClientFiles | undefined, ClientBuildError, ClientAssetServices> =>
-  Effect.gen(function* () {
-    if (build.assets.hmr !== undefined || !build.publicPath.startsWith("/")) return undefined;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = path.resolve(build.assetsBuildDirectory);
-    yield* fileSystem.readDirectory(root).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ClientBuildError({
-            message: `Cannot read the client build at ${root}`,
-            directory: root,
-            cause,
-          }),
-      ),
-    );
-    const files = (cacheControl: string) =>
-      HttpStaticServer.make({ root, cacheControl }).pipe(
-        // Making a static server only resolves its root.
-        Effect.orDie,
-      );
-    return {
-      prefix: build.publicPath.replace(/\/$/, ""),
-      hashed: yield* files(hashedCacheControl),
-      other: yield* files(otherCacheControl),
-    };
-  });
-
-/** The decoded path of a URL, or `undefined` when it does not decode. */
-const decodePath = (path: string): string | undefined => {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return undefined;
-  }
-};
-
-/**
- * Serves the request from the client build, or returns `None` when the build
- * has no such file: a path the build does not have, a directory without an
- * index file, a dotfile, a path outside the `publicPath`, or a method other
- * than GET and HEAD.
- */
-const serveClientFile = (
-  files: ClientFiles,
-  request: HttpServerRequest.HttpServerRequest,
-): Effect.Effect<
-  Option.Option<HttpServerResponse.HttpServerResponse>,
-  HttpServerError.HttpServerError
-> => {
-  const path = request.url.split("?")[0] ?? "";
-  if (
-    (request.method !== "GET" && request.method !== "HEAD") ||
-    !path.startsWith(`${files.prefix}/`)
-  ) {
-    return Effect.succeedNone;
-  }
-  const url = request.url.slice(files.prefix.length);
-  const file = decodePath(url.split("?")[0] ?? "");
-  // The decoded path, so an encoded dot such as `%2e` is a dotfile too.
-  if (file === undefined || hasDotSegment(file)) return Effect.succeedNone;
-  const serve = url.startsWith("/assets/") ? files.hashed : files.other;
-  return serve.pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, request.modify({ url })),
-    Effect.map(Option.some),
-    Effect.catchIf(isNotFound, () => Effect.succeedNone),
-  );
-};
-
-// ---------------------------------------------------------------------------
 // Tracing.
 // ---------------------------------------------------------------------------
 
@@ -288,6 +125,33 @@ const exportedSpan = (context: Context.Context<never>): Tracer.Span | undefined 
     Context.get(context, Tracer.Tracer) !== Tracer.nativeTracer
     ? span
     : undefined;
+};
+
+/**
+ * The `http.route` of a routed pattern, such as `/posts/:id`. React Router
+ * joins the route paths, so a root route without a path leaves out the
+ * leading slash.
+ */
+const httpRoute = (pattern: string): string => (pattern.startsWith("/") ? pattern : `/${pattern}`);
+
+/**
+ * Sets `http.route` on the request's span to the pattern of the routes that
+ * React Router matched, after React Router answered, also for a page that
+ * runs no route function. React Router 8 gives the pattern to a request
+ * handler hook. A request that matched no route keeps the router's `*`.
+ */
+const routeLabel: ServerInstrumentation = {
+  handler(handler) {
+    handler.instrument({
+      async request(handleRequest, { context }) {
+        const { meta } = await handleRequest();
+        const span = context?.get(requestSpanKey);
+        if (span !== undefined && meta !== undefined && meta.pattern !== "") {
+          span.attribute("http.route", httpRoute(meta.pattern));
+        }
+      },
+    });
+  },
 };
 
 /** What a route function produced: its value, or what it threw. */
@@ -367,9 +231,7 @@ const traced =
     const requestSpan = args.context.get(requestSpanKey);
     if (requestSpan === undefined) return fn(args, ...rest);
     if (typeof args.pattern === "string") {
-      // React Router joins the route paths, so a root route without a path leaves out the leading slash.
-      const route = args.pattern.startsWith("/") ? args.pattern : `/${args.pattern}`;
-      requestSpan.attribute("http.route", route);
+      requestSpan.attribute("http.route", httpRoute(args.pattern));
     }
     const store = args.context.get(storeKey);
     const program = Effect.useSpan(
@@ -446,18 +308,32 @@ const wrapModule = (
   };
 };
 
-/** Wraps every route module of a build. */
-const wrapBuild = (build: ServerBuild, handlers: RouteHandlers): ServerBuild => ({
-  ...build,
-  routes: Object.fromEntries(
-    Object.entries(build.routes).map(([id, route]) => [
-      id,
-      route === undefined
-        ? undefined
-        : { ...route, module: wrapModule(id, route.module, handlers) },
-    ]),
-  ),
-});
+/**
+ * Wraps every route module of a build, and adds the adapter's
+ * instrumentations after the app's own in the server entry module. An app
+ * often does not export `instrumentations`, and `Struct.evolve` changes only
+ * the keys that an object has, so the key is set with `Struct.assign`.
+ */
+const wrapBuild = (
+  build: ServerBuild,
+  handlers: RouteHandlers,
+  instrumentations: ReadonlyArray<ServerInstrumentation>,
+): ServerBuild =>
+  Struct.evolve(build, {
+    entry: (entry) =>
+      Struct.evolve(entry, {
+        module: (module) =>
+          Struct.assign(module, {
+            instrumentations: Arr.appendAll(module.instrumentations ?? [], instrumentations),
+          }),
+      }),
+    routes: (routes) =>
+      Record.map(routes, (route, id) =>
+        route === undefined
+          ? undefined
+          : Struct.evolve(route, { module: (module) => wrapModule(id, module, handlers) }),
+      ),
+  });
 
 /** React Router's request handler, as `createRequestHandler` returns it. */
 type RequestHandler = (request: Request, context: RouterContextProvider) => Promise<Response>;
@@ -473,12 +349,13 @@ interface LoadedBuild {
  * handler is built once per build value: React Router rebuilds its route
  * tables on every request when it is given a function, so the adapter
  * resolves the build itself. In development a new build after a change gets a
- * new handler. The last handler is kept across runs of {@link make}'s Effect,
- * since a development server can make the app for each request.
+ * new handler. The last handler is kept across requests, since a development
+ * build loads for each request.
  */
 const makeBuildLoader = (
-  options: Options,
+  options: Pick<ReactRouter.Options, "build" | "factory">,
   mode: string | undefined,
+  instrumentations: ReadonlyArray<ServerInstrumentation>,
 ): Effect.Effect<LoadedBuild> => {
   let cached: LoadedBuild | undefined;
   return Effect.promise(async () => {
@@ -486,7 +363,10 @@ const makeBuildLoader = (
     if (cached?.build !== build) {
       cached = {
         build,
-        handler: createRequestHandler(wrapBuild(build, options.factory.handlers), mode),
+        handler: createRequestHandler(
+          wrapBuild(build, options.factory.handlers, instrumentations),
+          mode,
+        ),
       };
     }
     return cached;
@@ -533,112 +413,178 @@ const callRouter = (
     });
   }).pipe(Effect.interruptible);
 
-/** True when the options serve the client build. */
-type ServesClientAssets<O> = O extends { readonly clientAssets: infer Serves }
-  ? [Serves] extends [false | undefined]
-    ? false
-    : true
-  : false;
+// ---------------------------------------------------------------------------
+// The ReactRouter service.
+// ---------------------------------------------------------------------------
 
 /**
- * The Effect HTTP app {@link make} makes. Serving the client build adds the
- * static file server's errors to its errors.
+ * The methods of React Router's routes. Not the method `*`, which also
+ * registers HEAD: the router answers HEAD with the GET route of a path only
+ * when no HEAD route matches it, so a HEAD route on `*` takes HEAD from every
+ * GET route of the app.
  */
-export type App<O extends Options> = Effect.Effect<
-  HttpServerResponse.HttpServerResponse,
-  | HttpServerError.RequestError
-  | (ServesClientAssets<O> extends true ? HttpServerError.HttpServerError : never),
-  HttpServerRequest.HttpServerRequest
->;
+const routeMethods = Arr.filter(HttpMethod.all, (method) => method !== "HEAD");
 
 /**
- * Makes the Effect HTTP app that serves React Router. Run the Effect once,
- * when the server starts. In production it loads the build, and with
- * `clientAssets` it reads the client build's directory, so a missing one fails
- * the server's start with a {@link ClientBuildError} and not its requests.
+ * React Router, as a service of the Effect HTTP app. `ReactRouter.layer`
+ * provides it, and `ReactRouter.routes` registers it on the app's router as
+ * the catch-all route.
  *
  * ```ts
- * import { ReactRouterHttp } from "react-router-effect/server";
- *
- * export const reactRouterApp = ReactRouterHttp.make({
- *   build: () => import("virtual:react-router/server-build"),
- *   factory: routeFactory,
- *   clientAssets: true,
- * });
- *
- * // Serve it like any Effect HTTP app, with the app's own middleware.
- * Layer.unwrap(
- *   Effect.map(reactRouterApp, (app) => HttpServer.serve(app, HttpMiddleware.logger)),
+ * export const App = ReactRouter.routes.pipe(
+ *   Layer.provide(
+ *     ReactRouter.layer({
+ *       build: () => import("virtual:react-router/server-build"),
+ *       factory: routeFactory,
+ *     }),
+ *   ),
  * );
  * ```
- *
- * In development, where the build changes, the app loads the build for each
- * request, and making it does nothing else.
- *
- * The request signal aborts only when the response ends early: when the
- * client leaves while React Router runs or while the body streams. A
- * completed response never aborts it.
  */
-export const make = <const O extends Options>(
-  options: O,
-): Effect.Effect<
-  App<O>,
-  ServesClientAssets<O> extends true ? ClientBuildError : never,
-  ServesClientAssets<O> extends true ? ClientAssetServices : never
-> => {
-  const mode = options.mode ?? process.env.NODE_ENV;
-  const loadBuild = makeBuildLoader(options, mode);
-  const settled = typeof options.build !== "function" || mode === "production";
-  const made = Effect.gen(function* () {
-    if (!settled) return serve(options, loadBuild, undefined);
-    const loaded = yield* loadBuild;
-    const files = options.clientAssets === true ? yield* makeClientFiles(loaded.build) : undefined;
-    return serve(options, Effect.succeed(loaded), files);
-  });
-  // The client build's errors and requirements apply only when the options serve it.
-  return made as unknown as Effect.Effect<
-    App<O>,
-    ServesClientAssets<O> extends true ? ClientBuildError : never,
-    ServesClientAssets<O> extends true ? ClientAssetServices : never
-  >;
-};
+export class ReactRouter extends Context.Service<
+  ReactRouter,
+  {
+    /**
+     * The build, when the layer loaded it once at startup: a build value, or
+     * a build function in production mode. `None` when the build loads for
+     * each request.
+     */
+    readonly build: Option.Option<ServerBuild>;
+    /**
+     * Answers the current request with React Router. The Scope is the
+     * request's scope: the resources that `loadContext` opens close with it.
+     */
+    readonly handle: Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      HttpServerError.RequestError,
+      HttpServerRequest.HttpServerRequest | Scope.Scope
+    >;
+  }
+>()("react-router-effect/ReactRouter") {
+  /**
+   * Provides React Router. A build value, or a build function in production
+   * mode, loads when the layer builds. Provide one value of this layer to
+   * every layer that reads the service: two values load the build twice.
+   */
+  static readonly layer = <R = never>(
+    options: ReactRouter.Options<R>,
+  ): Layer.Layer<ReactRouter, never, Exclude<R, Scope.Scope>> =>
+    Layer.effect(ReactRouter, makeReactRouter(options));
 
-/** The app for one loaded build source, and the client files it serves, if any. */
-const serve = (
-  options: Options,
+  /**
+   * Registers React Router as the catch-all route of the app's router, on
+   * `*`, for every method of `HttpMethod.all` but HEAD. A route that the app
+   * registers itself wins over it, also a route on `/`, such as the
+   * prerendered home page of `ReactRouterAssets.layer`. A HEAD request uses
+   * the GET route of its path, React Router's or the app's own, as Express
+   * does. A method outside `HttpMethod.all` gets the router's 404. Register
+   * it at the root of the router: under a prefix, the router removes the
+   * prefix from the request's URL.
+   */
+  static readonly routes = HttpRouter.use((router) =>
+    Effect.flatMap(ReactRouter, ({ handle }) =>
+      router.addAll(routeMethods.map((method) => HttpRouter.route(method, "*", handle))),
+    ),
+  );
+}
+
+export declare namespace ReactRouter {
+  /** The options of {@link ReactRouter.layer}. `R` is the requirement of `loadContext`. */
+  export interface Options<R = never> {
+    /** The server build: `() => import("virtual:react-router/server-build")`. */
+    readonly build: BuildSource;
+    /** The route factory whose runner, runtime and error model route Effects use. */
+    readonly factory: { readonly handlers: RouteHandlers };
+    /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
+    readonly mode?: string | undefined;
+    /**
+     * Makes React Router's load context for each request, as `getLoadContext`
+     * does for `@react-router/express`. Plain loaders and actions, and
+     * `handleRequest` in `entry.server.tsx`, read its values with
+     * `context.get`. Route Effects read services from their Effect context,
+     * so an app gives them services with router middleware, not here. The
+     * adapter adds its own keys to the provider. The Effect gets the services
+     * of `R` from the layer, and the services of the request, which win over
+     * the services of the layer. A defect answers an empty 500.
+     */
+    readonly loadContext?:
+      | ((
+          request: HttpServerRequest.HttpServerRequest,
+        ) => Effect.Effect<RouterContextProvider, never, R>)
+      | undefined;
+  }
+}
+
+/**
+ * Makes the service. A build value, or a build function in production mode,
+ * loads once here, so a build that does not load stops the server's start.
+ * Any other build loads for each request, and gets a new React Router handler
+ * when its value changes.
+ */
+const makeReactRouter = Effect.fnUntraced(function* <R>(options: ReactRouter.Options<R>) {
+  const mode = options.mode ?? process.env.NODE_ENV;
+  // The tracer of the layer. With the native tracer, whose spans go
+  // nowhere, React Router gets no hook, and does no work for it on a request.
+  const tracer = yield* Effect.tracer;
+  const loadBuild = makeBuildLoader(
+    options,
+    mode,
+    tracer === Tracer.nativeTracer ? [] : [routeLabel],
+  );
+  const handlers = options.factory.handlers;
+  // The request's own services, such as its scope and its span, win over
+  // the services of the layer, as `HttpApiMiddleware` merges them.
+  const services = yield* Effect.context<R>();
+  const { loadContext } = options;
+  const provided: ReactRouter.Options["loadContext"] =
+    loadContext === undefined
+      ? undefined
+      : (request) =>
+          Effect.updateContext(loadContext(request), (requestContext: Context.Context<never>) =>
+            Context.merge(services, requestContext),
+          );
+  if (typeof options.build === "function" && mode !== "production") {
+    return ReactRouter.of({
+      build: Option.none(),
+      handle: handleRequest(handlers, loadBuild, provided),
+    });
+  }
+  const loaded = yield* loadBuild;
+  return ReactRouter.of({
+    build: Option.some(loaded.build),
+    handle: handleRequest(handlers, Effect.succeed(loaded), provided),
+  });
+});
+
+/**
+ * Answers the current request with React Router. Route Effects get the
+ * request fiber's context without its scope, so they see the services that
+ * the app's router middleware provides. A route that needs a scope opens its
+ * own with `Effect.scoped`.
+ */
+const handleRequest = (
+  handlers: RouteHandlers,
   loadBuild: Effect.Effect<LoadedBuild>,
-  files: ClientFiles | undefined,
-): Effect.Effect<
-  HttpServerResponse.HttpServerResponse,
-  HttpServerError.RequestError | HttpServerError.HttpServerError,
-  HttpServerRequest.HttpServerRequest
-> =>
+  loadContext: ReactRouter.Options["loadContext"],
+): ReactRouter["Service"]["handle"] =>
   Effect.gen(function* () {
     const httpRequest = yield* HttpServerRequest.HttpServerRequest;
-    if (files !== undefined) {
-      const file = yield* serveClientFile(files, httpRequest);
-      if (Option.isSome(file)) return file.value;
-    }
     const { handler } = yield* loadBuild;
-    // Route effects get the request fiber's context, without its scope: a
-    // route that needs a scope opens its own with `Effect.scoped`.
     const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
     const controller = new AbortController();
     const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
-    const routerContext = new RouterContextProvider();
-    routerContext.set(
-      options.factory.handlers.requestContext,
-      Context.merge(fiberContext, options.requestContext?.(request) ?? Context.empty()),
-    );
+    const routerContext =
+      loadContext === undefined ? new RouterContextProvider() : yield* loadContext(httpRequest);
+    routerContext.set(handlers.requestContext, fiberContext);
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
     return toHttpResponse(response, controller);
   }).pipe(
     // React Router logs and answers the errors of route code. A defect of the
-    // adapter's own steps, such as a `requestContext` that throws, a build
-    // that does not load, or React Router's handler rejecting, goes to the
-    // app's loggers, and the client gets a 500, as Express's error handler
-    // does. Answering it keeps a logger middleware from logging it again.
+    // adapter's own steps, such as a `loadContext` that dies, a build that
+    // does not load, or React Router's handler rejecting, goes to the app's
+    // loggers, and the client gets an empty 500, as Express's error handler
+    // answers.
     Effect.catchDefect((defect) =>
       Effect.logError("React Router adapter failed", defect).pipe(
         Effect.as(HttpServerResponse.empty({ status: 500 })),
