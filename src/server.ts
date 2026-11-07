@@ -22,19 +22,7 @@
  *
  * @since 2.1.0
  */
-import {
-  Cause,
-  Context,
-  Data,
-  Effect,
-  Exit,
-  FileSystem,
-  Option,
-  Path,
-  Scope,
-  Stream,
-  Tracer,
-} from "effect";
+import { Context, Data, Effect, Exit, FileSystem, Option, Path, Scope, Stream } from "effect";
 import {
   Cookies,
   type HttpPlatform,
@@ -43,30 +31,46 @@ import {
   HttpServerResponse,
   HttpStaticServer,
 } from "effect/http";
-import {
-  createContext,
-  createRequestHandler,
-  RouterContextProvider,
-  type RouterContext,
-  type ServerBuild,
-  type MiddlewareFunction,
-} from "react-router";
+import { RouterContextProvider, type ServerBuild } from "react-router";
 
-import type { RouteHandlers } from "./factory.ts";
+import {
+  type BuildSource,
+  buildRequestLayer,
+  callRouter,
+  exportedSpan,
+  type LoadedBuild,
+  makeBuildLoader,
+  type RequestLayer,
+  type RequestScope,
+  requestSpanKey,
+  type RouteFactoryLike,
+  runtimeContextOf,
+  type RuntimeServicesOf,
+} from "./core.ts";
 
 // ---------------------------------------------------------------------------
 // Options.
 // ---------------------------------------------------------------------------
 
-/** A React Router server build, or a function that loads it, as in `createRequestHandler`. */
-export type BuildSource = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
+export type { BuildSource } from "./core.ts";
+
+/**
+ * What the request layer may require: the services of the factory's runtime,
+ * and the HTTP request.
+ */
+export type RequestLayerServices<Factory> =
+  | RuntimeServicesOf<Factory>
+  | HttpServerRequest.HttpServerRequest;
 
 /** The options of {@link make}. */
-export interface Options {
+export interface Options<
+  Factory extends RouteFactoryLike = RouteFactoryLike,
+  ClientAssets extends boolean | undefined = boolean | undefined,
+> {
   /** The server build: `() => import("virtual:react-router/server-build")`. */
   readonly build: BuildSource;
   /** The route factory whose runner, runtime and error model route Effects use. */
-  readonly factory: { readonly handlers: RouteHandlers };
+  readonly factory: Factory;
   /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
   readonly mode?: string | undefined;
   /**
@@ -85,13 +89,32 @@ export interface Options {
    * platform's file system, which `NodeHttpServer.layer` and the other server
    * layers provide.
    */
-  readonly clientAssets?: boolean | undefined;
+  readonly clientAssets?: ClientAssets;
   /**
    * Builds the services of one request, before React Router runs. They join
    * the request's effect context, so every middleware, loader and action sees
    * them without a middleware that sets them.
    */
   readonly requestContext?: ((request: Request) => Context.Context<never>) | undefined;
+  /**
+   * Builds the services of one request as a layer, before React Router runs.
+   * Use it for a service that holds a resource for one request, such as a
+   * database connection or a transaction.
+   *
+   * The adapter builds the layer for every request that reaches React Router,
+   * in a scope of its own, and closes the scope when the response ends: after
+   * its body is sent, or when the client leaves. The layer may require the
+   * services of the factory's runtime, the `HttpServerRequest`, and what
+   * `requestContext` builds. A layer the runtime already built is reused.
+   * Its services join the request's effect context, like `requestContext`'s.
+   * When building the layer fails, the adapter logs the failure and answers
+   * 500.
+   *
+   * @since 2.2.0
+   */
+  readonly requestLayer?:
+    | ((request: Request) => RequestLayer<RequestLayerServices<Factory>>)
+    | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +137,7 @@ export interface Options {
 const toHttpResponse = (
   response: Response,
   controller: AbortController,
+  requestScope?: RequestScope,
 ): HttpServerResponse.HttpServerResponse => {
   const headers = new Headers(response.headers);
   headers.delete("set-cookie");
@@ -129,9 +153,16 @@ const toHttpResponse = (
     ? HttpServerResponse.empty(init)
     : HttpServerResponse.stream(
         Stream.fromReadableStream({ evaluate: () => body, onError: (error) => error }).pipe(
-          Stream.onExit((exit) =>
-            Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => controller.abort()),
-          ),
+          Stream.onExit((exit) => {
+            const aborted = Exit.isSuccess(exit)
+              ? Effect.void
+              : Effect.sync(() => controller.abort());
+            // The request layer's scope closes when the body ends, if Effect's HTTP
+            // server has not closed it with the request's scope already.
+            return requestScope === undefined
+              ? aborted
+              : Effect.andThen(aborted, requestScope.close(exit));
+          }),
         ),
         init,
       );
@@ -266,272 +297,8 @@ const serveClientFile = (
 };
 
 // ---------------------------------------------------------------------------
-// Tracing.
-// ---------------------------------------------------------------------------
-
-/**
- * The span of a traced request: the server span of Effect's HTTP tracer, with
- * a tracer that exports spans. Without it, the adapter adds no spans.
- */
-const requestSpanKey: RouterContext<Tracer.Span | undefined> = createContext<
-  Tracer.Span | undefined
->(undefined);
-
-/**
- * The span of the request fiber, when a tracer exports it: not the native
- * tracer, whose spans go nowhere, and not an unsampled span.
- */
-const exportedSpan = (context: Context.Context<never>): Tracer.Span | undefined => {
-  const span = Context.getOrUndefined(context, Tracer.ParentSpan);
-  return span?._tag === "Span" &&
-    span.sampled &&
-    Context.get(context, Tracer.Tracer) !== Tracer.nativeTracer
-    ? span
-    : undefined;
-};
-
-/** What a route function produced: its value, or what it threw. */
-type Settled =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly error: unknown };
-
-/** Calls a route function and captures its result, a synchronous throw included. */
-const settle = (call: () => unknown): Promise<Settled> => {
-  try {
-    return Promise.resolve(call()).then(
-      (value): Settled => ({ ok: true, value }),
-      (error: unknown): Settled => ({ ok: false, error }),
-    );
-  } catch (error) {
-    return Promise.resolve({ ok: false, error });
-  }
-};
-
-/** The status of a thrown `Response` or `data(...)`, which React Router sends as a response. */
-const thrownStatus = (error: unknown): number | undefined => {
-  if (error instanceof Response) return error.status;
-  if (typeof error !== "object" || error === null || !("type" in error)) return undefined;
-  if (error.type !== "DataWithResponseInit" || !("init" in error)) return undefined;
-  const init = error.init;
-  return typeof init === "object" &&
-    init !== null &&
-    "status" in init &&
-    typeof init.status === "number"
-    ? init.status
-    : 200;
-};
-
-/**
- * A thrown value is an error of the span unless React Router sends it as a
- * response below 500, such as a redirect or `data(..., 404)`.
- */
-const isSpanError = (error: unknown): boolean => {
-  const status = thrownStatus(error);
-  return status === undefined || status >= 500;
-};
-
-/** What every route function gets, as far as tracing reads it. */
-interface TracedArgs {
-  readonly context: Readonly<RouterContextProvider>;
-  /** The routed pattern of the request, such as `/posts/:id`. */
-  readonly pattern?: string | undefined;
-}
-
-/** The kind of route function, as React Router names it. */
-type Operation = "middleware" | "loader" | "action";
-
-/**
- * Runs a route function in a span of its own when the request is traced,
- * such as `react-router.loader routes/home`, and sets `http.route` on the
- * request's span.
- *
- * The spans follow React Router's structure. A middleware's span is the
- * parent of everything its `next()` runs: the next middleware, then the
- * loaders and the action. A route Effect nests under its function's span, and
- * so do the clients an OpenTelemetry instrumentation traces, since Effect's
- * OpenTelemetry tracer makes the span active while the function is called.
- *
- * The request store's parent span passes the structure down. A loader or an
- * action reads it once, when it is called. A middleware's span stays there
- * for the rest of the chain, until the middleware finishes; an Effect
- * middleware's own spans around `next()` take its place there.
- */
-const traced =
-  <Args extends TracedArgs, Rest extends ReadonlyArray<unknown>>(
-    operation: Operation,
-    routeId: string,
-    storeKey: RouterContext<Context.Context<never>>,
-    fn: (args: Args, ...rest: Rest) => Promise<unknown>,
-  ) =>
-  (args: Args, ...rest: Rest): Promise<unknown> => {
-    const requestSpan = args.context.get(requestSpanKey);
-    if (requestSpan === undefined) return fn(args, ...rest);
-    if (typeof args.pattern === "string") {
-      // React Router joins the route paths, so a root route without a path leaves out the leading slash.
-      const route = args.pattern.startsWith("/") ? args.pattern : `/${args.pattern}`;
-      requestSpan.attribute("http.route", route);
-    }
-    const store = args.context.get(storeKey);
-    const program = Effect.useSpan(
-      `react-router.${operation} ${routeId}`,
-      {
-        kind: "internal",
-        attributes: {
-          "react_router.operation.name": operation,
-          "react_router.route.id": routeId,
-        },
-      },
-      (span) =>
-        Effect.sync(() => {
-          args.context.set(storeKey, Context.add(store, Tracer.ParentSpan, span));
-          const settled = settle(() => fn(args, ...rest));
-          if (operation !== "middleware") args.context.set(storeKey, store);
-          return settled;
-        }).pipe(
-          Effect.withParentSpan(span),
-          Effect.flatMap((settled) => Effect.promise(() => settled)),
-          Effect.flatMap((result) =>
-            result.ok || !isSpanError(result.error)
-              ? Effect.succeed(result)
-              : Effect.fail(result.error),
-          ),
-        ),
-    );
-    return Effect.runPromiseExitWith(store)(program).then((exit) => {
-      if (operation === "middleware") args.context.set(storeKey, store);
-      if (Exit.isFailure(exit)) throw Cause.squash(exit.cause);
-      if (exit.value.ok) return exit.value.value;
-      throw exit.value.error;
-    });
-  };
-
-// ---------------------------------------------------------------------------
-// Build wrapping.
-// ---------------------------------------------------------------------------
-
-type ServerRoute = NonNullable<ServerBuild["routes"][string]>;
-type ServerRouteModule = ServerRoute["module"];
-
-/**
- * Wraps a route module's loader, action and middleware with the factory's
- * runner, and traces them. The module itself is left as it is.
- */
-const wrapModule = (
-  routeId: string,
-  module: ServerRouteModule,
-  handlers: RouteHandlers,
-): ServerRouteModule => {
-  const store = handlers.requestContext;
-  return {
-    ...module,
-    loader:
-      module.loader === undefined
-        ? undefined
-        : traced("loader", routeId, store, handlers.loader(module.loader)),
-    action:
-      module.action === undefined
-        ? undefined
-        : traced("action", routeId, store, handlers.action(module.action)),
-    middleware: module.middleware?.map(
-      // A wrapped middleware resolves with what the original returns: the
-      // route's response, data, or nothing.
-      (fn) =>
-        traced(
-          "middleware",
-          routeId,
-          store,
-          handlers.middleware(fn),
-        ) as MiddlewareFunction<Response>,
-    ),
-  };
-};
-
-/** Wraps every route module of a build. */
-const wrapBuild = (build: ServerBuild, handlers: RouteHandlers): ServerBuild => ({
-  ...build,
-  routes: Object.fromEntries(
-    Object.entries(build.routes).map(([id, route]) => [
-      id,
-      route === undefined
-        ? undefined
-        : { ...route, module: wrapModule(id, route.module, handlers) },
-    ]),
-  ),
-});
-
-/** React Router's request handler, as `createRequestHandler` returns it. */
-type RequestHandler = (request: Request, context: RouterContextProvider) => Promise<Response>;
-
-/** A loaded build and React Router's request handler for it. */
-interface LoadedBuild {
-  readonly build: ServerBuild;
-  readonly handler: RequestHandler;
-}
-
-/**
- * Loads the build and returns React Router's request handler for it. The
- * handler is built once per build value: React Router rebuilds its route
- * tables on every request when it is given a function, so the adapter
- * resolves the build itself. In development a new build after a change gets a
- * new handler. The last handler is kept across runs of {@link make}'s Effect,
- * since a development server can make the app for each request.
- */
-const makeBuildLoader = (
-  options: Options,
-  mode: string | undefined,
-): Effect.Effect<LoadedBuild> => {
-  let cached: LoadedBuild | undefined;
-  return Effect.promise(async () => {
-    const build = typeof options.build === "function" ? await options.build() : options.build;
-    if (cached?.build !== build) {
-      cached = {
-        build,
-        handler: createRequestHandler(wrapBuild(build, options.factory.handlers), mode),
-      };
-    }
-    return cached;
-  });
-};
-
-// ---------------------------------------------------------------------------
 // The adapter.
 // ---------------------------------------------------------------------------
-
-/**
- * Calls React Router. The call starts in the request fiber, so code that
- * reads the async context, such as an OpenTelemetry tracer whose context the
- * Effect tracer sets, sees the request's. When the request fiber is
- * interrupted, because the client left, the request signal aborts, and a
- * response that React Router resolves afterwards has its body cancelled.
- *
- * Effect's HTTP server runs the app uninterruptible, and interrupts the fiber
- * only where the app opts in, so the call is interruptible.
- */
-const callRouter = (
-  handler: RequestHandler,
-  request: Request,
-  context: RouterContextProvider,
-  controller: AbortController,
-): Effect.Effect<Response> =>
-  Effect.callback<Response>((resume) => {
-    let interrupted = false;
-    handler(request, context).then(
-      (response) => {
-        if (interrupted) {
-          response.body?.cancel().catch(() => undefined);
-          return;
-        }
-        resume(Effect.succeed(response));
-      },
-      (error: unknown) => {
-        if (!interrupted) resume(Effect.die(error));
-      },
-    );
-    return Effect.sync(() => {
-      interrupted = true;
-      controller.abort();
-    });
-  }).pipe(Effect.interruptible);
 
 /** True when the options serve the client build. */
 type ServesClientAssets<O> = O extends { readonly clientAssets: infer Serves }
@@ -579,15 +346,18 @@ export type App<O extends Options> = Effect.Effect<
  * client leaves while React Router runs or while the body streams. A
  * completed response never aborts it.
  */
-export const make = <const O extends Options>(
-  options: O,
+export const make = <
+  Factory extends RouteFactoryLike,
+  const ClientAssets extends boolean | undefined = undefined,
+>(
+  options: Options<Factory, ClientAssets>,
 ): Effect.Effect<
-  App<O>,
-  ServesClientAssets<O> extends true ? ClientBuildError : never,
-  ServesClientAssets<O> extends true ? ClientAssetServices : never
+  App<Options<Factory, ClientAssets>>,
+  ServesClientAssets<Options<Factory, ClientAssets>> extends true ? ClientBuildError : never,
+  ServesClientAssets<Options<Factory, ClientAssets>> extends true ? ClientAssetServices : never
 > => {
   const mode = options.mode ?? process.env.NODE_ENV;
-  const loadBuild = makeBuildLoader(options, mode);
+  const loadBuild = makeBuildLoader(options.build, options.factory.handlers, mode);
   const settled = typeof options.build !== "function" || mode === "production";
   const made = Effect.gen(function* () {
     if (!settled) return serve(options, loadBuild, undefined);
@@ -597,11 +367,31 @@ export const make = <const O extends Options>(
   });
   // The client build's errors and requirements apply only when the options serve it.
   return made as unknown as Effect.Effect<
-    App<O>,
-    ServesClientAssets<O> extends true ? ClientBuildError : never,
-    ServesClientAssets<O> extends true ? ClientAssetServices : never
+    App<Options<Factory, ClientAssets>>,
+    ServesClientAssets<Options<Factory, ClientAssets>> extends true ? ClientBuildError : never,
+    ServesClientAssets<Options<Factory, ClientAssets>> extends true ? ClientAssetServices : never
   >;
 };
+
+/**
+ * Builds the request layer, and ties its scope to the HTTP request's. Effect's
+ * HTTP server closes the request's scope once the response is sent, or when
+ * the client leaves; a streamed body keeps it open until the body ends. A
+ * request without one closes the layer's scope when the body ends instead. A
+ * failure to build the layer is a defect of the adapter: logged, and a 500.
+ */
+const openRequestScope = (
+  options: Options,
+  layer: RequestLayer<unknown>,
+  base: Context.Context<never>,
+  httpScope: Scope.Scope | undefined,
+): Effect.Effect<RequestScope> =>
+  Effect.gen(function* () {
+    const runtimeContext = yield* runtimeContextOf(options.factory.handlers);
+    const opened = yield* buildRequestLayer(layer, Context.merge(runtimeContext, base));
+    if (httpScope !== undefined) yield* Scope.addFinalizerExit(httpScope, opened.close);
+    return opened;
+  }).pipe(Effect.orDie);
 
 /** The app for one loaded build source, and the client files it serves, if any. */
 const serve = (
@@ -620,19 +410,35 @@ const serve = (
       if (Option.isSome(file)) return file.value;
     }
     const { handler } = yield* loadBuild;
+    const requestFiberContext = yield* Effect.context<never>();
     // Route effects get the request fiber's context, without its scope: a
     // route that needs a scope opens its own with `Effect.scoped`.
-    const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
+    const fiberContext = Context.omit(Scope.Scope)(requestFiberContext);
     const controller = new AbortController();
     const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
+    const base = Context.merge(fiberContext, options.requestContext?.(request) ?? Context.empty());
+    const requestScope =
+      options.requestLayer === undefined
+        ? undefined
+        : yield* openRequestScope(
+            options,
+            options.requestLayer(request),
+            base,
+            Context.getOrUndefined(requestFiberContext, Scope.Scope),
+          );
     const routerContext = new RouterContextProvider();
     routerContext.set(
       options.factory.handlers.requestContext,
-      Context.merge(fiberContext, options.requestContext?.(request) ?? Context.empty()),
+      requestScope === undefined ? base : Context.merge(base, requestScope.context),
     );
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
-    const response = yield* callRouter(handler, request, routerContext, controller);
-    return toHttpResponse(response, controller);
+    const response = yield* callRouter(handler, request, routerContext, controller).pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && requestScope !== undefined ? requestScope.close(exit) : Effect.void,
+      ),
+    );
+    if (requestScope !== undefined && response.body === null) yield* requestScope.close(Exit.void);
+    return toHttpResponse(response, controller, requestScope);
   }).pipe(
     // React Router logs and answers the errors of route code. A defect of the
     // adapter's own steps, such as a `requestContext` that throws, a build
