@@ -23,6 +23,7 @@
  * @since 2.1.0
  */
 import {
+  Array as Arr,
   Cause,
   Context,
   Data,
@@ -32,8 +33,10 @@ import {
   Layer,
   Option,
   Path,
+  Record,
   Scope,
   Stream,
+  Struct,
   Tracer,
 } from "effect";
 import {
@@ -51,6 +54,7 @@ import {
   RouterContextProvider,
   type RouterContext,
   type ServerBuild,
+  type ServerInstrumentation,
   type MiddlewareFunction,
 } from "react-router";
 
@@ -448,18 +452,32 @@ const wrapModule = (
   };
 };
 
-/** Wraps every route module of a build. */
-const wrapBuild = (build: ServerBuild, handlers: RouteHandlers): ServerBuild => ({
-  ...build,
-  routes: Object.fromEntries(
-    Object.entries(build.routes).map(([id, route]) => [
-      id,
-      route === undefined
-        ? undefined
-        : { ...route, module: wrapModule(id, route.module, handlers) },
-    ]),
-  ),
-});
+/**
+ * Wraps every route module of a build, and adds the adapter's
+ * instrumentations after the app's own in the server entry module. An app
+ * often does not export `instrumentations`, and `Struct.evolve` changes only
+ * the keys that an object has, so the key is set with `Struct.assign`.
+ */
+const wrapBuild = (
+  build: ServerBuild,
+  handlers: RouteHandlers,
+  instrumentations: ReadonlyArray<ServerInstrumentation>,
+): ServerBuild =>
+  Struct.evolve(build, {
+    entry: (entry) =>
+      Struct.evolve(entry, {
+        module: (module) =>
+          Struct.assign(module, {
+            instrumentations: Arr.appendAll(module.instrumentations ?? [], instrumentations),
+          }),
+      }),
+    routes: (routes) =>
+      Record.map(routes, (route, id) =>
+        route === undefined
+          ? undefined
+          : Struct.evolve(route, { module: (module) => wrapModule(id, module, handlers) }),
+      ),
+  });
 
 /** React Router's request handler, as `createRequestHandler` returns it. */
 type RequestHandler = (request: Request, context: RouterContextProvider) => Promise<Response>;
@@ -488,7 +506,7 @@ const makeBuildLoader = (
     if (cached?.build !== build) {
       cached = {
         build,
-        handler: createRequestHandler(wrapBuild(build, options.factory.handlers), mode),
+        handler: createRequestHandler(wrapBuild(build, options.factory.handlers, []), mode),
       };
     }
     return cached;
