@@ -244,6 +244,12 @@ const processRouteError = (
  * it in middleware and pass it to the factory's `requestContext` - the runner
  * reads it on every request and provides its services to the loader/action.
  *
+ * With the server adapter, do not set it to a new context. The adapter sets it
+ * to the request fiber's context before React Router runs, and a new context
+ * replaces those services, such as `HttpServerRequest` and the server span.
+ * Provide request services with a router middleware on `ReactRouter.routes`.
+ * The middleware below is for an app without the adapter.
+ *
  * It's just a `RouterContext`; create one with React Router's `createContext`:
  *
  * ```ts
@@ -257,7 +263,7 @@ const processRouteError = (
  *
  * export const requestContext: RequestContextKey<RequestContext> = createContext();
  *
- * // middleware:
+ * // middleware, in an app without the server adapter:
  * export const middleware: Route.MiddlewareFunction[] = [
  *   ({ context, request }, next) => {
  *     context.set(requestContext, Context.make(RequestContext, { userId: readUser(request) }));

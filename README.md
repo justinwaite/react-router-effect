@@ -343,6 +343,12 @@ A route Effect can then require the runtime's services and the request's service
 requirement is a compile error. `RequestContextKey<ReqServices>` is an alias of
 `RouterContext<Context.Context<ReqServices>>`.
 
+The adapter sets this key to the request fiber's context before React Router runs. That context
+holds the server span, `HttpServerRequest` and the services of the router middleware. Do not set the
+key to a new context in a React Router middleware, as an app without the adapter does. A new context
+replaces those services for every function after that middleware. Provide request services with a
+router middleware or an effect middleware, as this section shows.
+
 ## The adapter
 
 `react-router-effect/server` is a React Router adapter for Effect's HTTP router, on Effect's Node
@@ -526,6 +532,10 @@ the new `App` and closes the old one. Concurrent requests share one build.
 - The `routerConfig` option of `HttpRouter.serve` applies to the server's router only. In
   development, the `App` has its own router, with the default configuration.
 - Vite's middleware takes Node requests, so the layer needs Effect's Node HTTP server.
+- Keep the websocket of Vite's HMR (hot module replacement) on its own port. The port is 24678 by
+  default, and `server.ws.port` sets another one. Do not give Vite the app's Node server with
+  `server.ws.server`, or with its older name `server.hmr.server`. Effect's Node server runs the app
+  for every upgrade request, and the app's response closes Vite's websocket.
 
 ### Cookies
 
@@ -556,8 +566,26 @@ return new Response(Readable.toWeb(file) as ReadableStream, {
 ### Tracing
 
 When the request has a server span, the adapter traces React Router. If the app provides a tracer
-that exports spans, such as `OtelTracer`, Effect's HTTP server makes the server span. Each
-middleware, loader and action runs in a span of its own, such as `react-router.loader routes/todos`.
+that exports spans, such as `OtelTracer`, Effect's HTTP server makes the server span. Provide the
+tracer to the layer that calls `HttpRouter.serve`, in `server.js`:
+
+```js
+NodeRuntime.runMain(
+  Layer.launch(
+    HttpRouter.serve(App).pipe(
+      Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 3000 })),
+      // The app's tracer layer, such as an `OtelTracer` layer from `@effect/opentelemetry`.
+      Layer.provide(TracerLive),
+    ),
+  ),
+);
+```
+
+Effect's server runs each request with the services of that layer. A tracer that only `App`
+provides makes no server span, so the adapter adds no spans.
+
+Each middleware, loader and action runs in a span of its own, such as
+`react-router.loader routes/todos`.
 The spans nest as React Router calls the functions. This is the example's `GET /todos`:
 
 ```text
@@ -759,7 +787,8 @@ of a rejected promise. It flows through the same recover and throw handling as a
 
 Without the adapter, no router middleware runs before React Router. Set the context key in a plain
 React Router middleware. The factory's `requestContext` reads it, and provides those services to the loader or
-action:
+action. With the adapter, do not set the key this way, as
+[Per-request services](#per-request-services) tells. This is the pattern without the adapter:
 
 ```ts
 // app/request-context.server.ts
