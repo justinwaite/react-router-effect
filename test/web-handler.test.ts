@@ -5,7 +5,7 @@
  */
 import { Context, Effect, Layer, Tracer } from "effect";
 import { Headers, HttpRouter, HttpServerRequest } from "effect/http";
-import type { ServerBuild } from "react-router";
+import { RouterContextProvider, type ServerBuild } from "react-router";
 import { afterAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
@@ -281,6 +281,33 @@ describe("the adapter on HttpRouter.toWebHandler", () => {
     const reading = HttpRouter.toWebHandler(Layer.mergeAll(App, ReadBody), {
       disableLogger: true,
     });
+    try {
+      const response = await reading.handler(
+        request("/ignore", { method: "POST", body: "signature=1" }),
+        executionContext,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ saved: true });
+    } finally {
+      await reading.dispose();
+    }
+  });
+
+  it("answers an action whose body loadContext read first", async () => {
+    const reading = HttpRouter.toWebHandler(
+      ReactRouter.routes.pipe(
+        Layer.provide(
+          ReactRouter.layer({
+            build,
+            factory: routeFactory,
+            mode: "production",
+            loadContext: (current) =>
+              Effect.map(Effect.orDie(current.text), () => new RouterContextProvider()),
+          }),
+        ),
+      ),
+      { disableLogger: true },
+    );
     try {
       const response = await reading.handler(
         request("/ignore", { method: "POST", body: "signature=1" }),
