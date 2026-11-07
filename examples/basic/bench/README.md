@@ -7,21 +7,21 @@ with 50 connections. Each number is the median of 3 rounds:
 
 | Case                    | `@react-router/node` | Express template | react-router-effect | vs Express |
 | ----------------------- | -------------------- | ---------------- | ------------------- | ---------- |
-| document, promise       | 1,256 req/s          | 1,189 req/s      | 1,042 req/s         | 88%        |
-| document, Effect        | 1,433 req/s          | 1,355 req/s      | 1,200 req/s         | 89%        |
-| `.data`, promise loader | 3,582 req/s          | 3,328 req/s      | 2,885 req/s         | 87%        |
-| `.data`, Effect loader  | 3,524 req/s          | 3,221 req/s      | 2,779 req/s         | 86%        |
-| action, promise         | 3,882 req/s          | 3,532 req/s      | 2,719 req/s         | 77%        |
-| action, Effect          | 3,741 req/s          | 3,487 req/s      | 2,777 req/s         | 80%        |
-| client file             | n/a                  | 10,934 req/s     | 4,716 req/s         | 43%        |
+| document, promise       | 1,298 req/s          | 1,212 req/s      | 1,070 req/s         | 88%        |
+| document, Effect        | 1,443 req/s          | 1,346 req/s      | 1,164 req/s         | 86%        |
+| `.data`, promise loader | 3,615 req/s          | 3,185 req/s      | 2,869 req/s         | 90%        |
+| `.data`, Effect loader  | 3,574 req/s          | 3,147 req/s      | 2,737 req/s         | 87%        |
+| action, promise         | 3,803 req/s          | 3,517 req/s      | 2,657 req/s         | 76%        |
+| action, Effect          | 3,638 req/s          | 3,429 req/s      | 2,679 req/s         | 78%        |
+| client file             | n/a                  | 11,388 req/s     | 4,582 req/s         | 40%        |
 
 From `examples/basic`, `node bench/http.ts --gaps` splits the time per request, for Express and for
-the adapter. Effect's HTTP server costs 4 to 6 µs per request. Express with `express.static` costs
-22 to 23 µs on a GET. The adapter loses that back in converting the request and React Router's
-response. Both bodies stream through an Effect `Stream`, so the app's middleware can work on them.
-This costs 20 to 59 µs per request, most for documents and actions. The adapter's own work adds 40
-to 103 µs. It includes the request's services, the abort signal and the cookies. Client files go through Effect's `HttpStaticServer`,
-which looks each file up twice. In production, put a CDN in front of `/assets/`.
+the adapter. Effect's HTTP server costs less per request than Express with `express.static` on a
+GET. The adapter loses that gain in converting the request and React Router's response. Both bodies
+stream through an Effect `Stream`, so the app's middleware can work on them. This costs the most
+for documents and actions. The adapter's own work includes the request's services, the abort
+signal and the cookies. Client files go through Effect's `HttpStaticServer`, which looks each file
+up twice. In production, put a CDN in front of `/assets/`.
 
 ## Faster on Node
 
@@ -35,7 +35,7 @@ Node-specific changes in `src/server.ts` measured faster. Neither changes how co
    because its stream sends the `100 Continue`.
 2. Listen for the `close` event of `NodeHttpServerRequest.toServerResponse(request)`. If the
    response did not finish, abort the request signal there. Remove the `Stream.onExit` on the
-   response body. This saved about 25 µs per request.
+   response body.
 
 Both changes tie the adapter to Effect's Node HTTP server, and the first adds `@react-router/node`
 as a peer dependency. Run `node bench/http.ts` before and after to confirm the gain on your machine.

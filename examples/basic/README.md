@@ -59,41 +59,30 @@ rounds. The last column is the range of the 3 rounds.
 
 | Case                    | `@react-router/node` | Express template | react-router-effect | vs Express | Rounds |
 | ----------------------- | -------------------- | ---------------- | ------------------- | ---------- | ------ |
-| document, promise       | 1,256 req/s          | 1,189 req/s      | 1,042 req/s         | 88%        | 87–94% |
-| document, Effect        | 1,433 req/s          | 1,355 req/s      | 1,200 req/s         | 89%        | 87–89% |
-| `.data`, promise loader | 3,582 req/s          | 3,328 req/s      | 2,885 req/s         | 87%        | 84–90% |
-| `.data`, Effect loader  | 3,524 req/s          | 3,221 req/s      | 2,779 req/s         | 86%        | 85–90% |
-| action, promise         | 3,882 req/s          | 3,532 req/s      | 2,719 req/s         | 77%        | 74–78% |
-| action, Effect          | 3,741 req/s          | 3,487 req/s      | 2,777 req/s         | 80%        | 78–82% |
-| client file             | –                    | 10,934 req/s     | 4,716 req/s         | 43%        | 39–43% |
+| document, promise       | 1,298 req/s          | 1,212 req/s      | 1,070 req/s         | 88%        | 85–95% |
+| document, Effect        | 1,443 req/s          | 1,346 req/s      | 1,164 req/s         | 86%        | 84–88% |
+| `.data`, promise loader | 3,615 req/s          | 3,185 req/s      | 2,869 req/s         | 90%        | 88–92% |
+| `.data`, Effect loader  | 3,574 req/s          | 3,147 req/s      | 2,737 req/s         | 87%        | 87–91% |
+| action, promise         | 3,803 req/s          | 3,517 req/s      | 2,657 req/s         | 76%        | 73–76% |
+| action, Effect          | 3,638 req/s          | 3,429 req/s      | 2,679 req/s         | 78%        | 76–81% |
+| client file             | –                    | 11,388 req/s     | 4,582 req/s         | 40%        | 39–41% |
 
-Where the time goes, per request against `@react-router/node`, Express / the adapter:
+Where the time goes, per request against `@react-router/node`. Run `node bench/http.ts --gaps` to
+measure each part on your machine.
 
-| Case                    | Total         | The server itself | Request and response against Web ones | The adapter's own work |
-| ----------------------- | ------------- | ----------------- | ------------------------------------- | ---------------------- |
-| document, promise       | +17 / +127 µs | +22 / +5 µs       | -5 / +59 µs                           | +64 µs                 |
-| document, Effect        | +46 / +152 µs | +23 / +5 µs       | +24 / +44 µs                          | +103 µs                |
-| `.data`, promise loader | +28 / +65 µs  | +23 / +5 µs       | +5 / +20 µs                           | +40 µs                 |
-| `.data`, Effect loader  | +30 / +68 µs  | +23 / +6 µs       | +6 / +22 µs                           | +40 µs                 |
-| action, promise         | +14 / +114 µs | +8 / +4 µs        | +6 / +55 µs                           | +55 µs                 |
-| action, Effect          | +16 / +92 µs  | +8 / +4 µs        | +9 / +41 µs                           | +47 µs                 |
-
-A server varies by 2–10% between rounds on this machine, about 10–30 µs on a `.data` request and
-more on a document, so read the rows as approximate.
-
-- **The server itself.** Effect's HTTP server costs 4–6 µs per request. Express costs 22–23 µs
-  on a GET, most of it `express.static` looking for a file on every request before React Router
-  runs, and 8 µs on a POST, which `express.static` skips.
+- **The server itself.** Effect's HTTP server costs less than Express. On a GET, most of the cost
+  of Express is `express.static`, which looks for a file on every request before React Router runs.
+  A POST skips `express.static`.
 - **Request and response against Web ones.** `@react-router/express` converts as
   `@react-router/node` does, so Express adds next to nothing here. On Effect's server, React
   Router's response body streams through an Effect `Stream`, chunk by chunk, so documents, which
   stream the most chunks, pay the most. Actions also read the request body through an Effect stream.
   The response body is an `HttpServerResponse` so that the app's own
   middleware, such as compression, can work on it; writing it to Node directly would bypass that.
-- **The adapter's own work**, 40–103 µs: what the adapter adds to `effect-minimal`. It is the
-  request fiber's context for route Effects, the abort signal, which watches the response body with
-  `Stream.onExit`, the client build lookup, the call into React Router with interruption, the
-  response conversion, and the tracing check. The document rows vary the most between rounds.
+- **The adapter's own work**: what the adapter adds to `effect-minimal`. It includes the request
+  fiber's context for route Effects and the abort signal, which watches the response body with
+  `Stream.onExit`. It also includes the call into React Router with interruption, the response
+  conversion and the tracing check.
 
 What changed the numbers:
 
@@ -102,12 +91,11 @@ What changed the numbers:
 - The adapter uses only Effect's HTTP modules. Two Node-specific versions were faster but are not
   kept. Reading the request body with React Router's `createReadableStreamFromReadable` cost about
   33 µs less per request than Effect's stream (`bench/request-body.ts`). Listening for the Node
-  response's `close` event cost about 25 µs less per request than a `Stream.onExit` on the response
-  body.
+  response's `close` event was faster than a `Stream.onExit` on the response body.
 - Did not help, so not kept: streaming a client file with headers kept from its first response,
   without the static server's second lookup; piping the response body through Node streams
-  (`Readable.fromWeb` and a raw response), slower by 30–80 µs per request.
+  (`Readable.fromWeb` and a raw response), which was slower.
 
-Client files are at 41% of `express.static`: Effect's `HttpStaticServer` stats each file twice and
+Client files are at 40% of `express.static`: Effect's `HttpStaticServer` stats each file twice and
 writes through a raw Node pipe that builds an abort error per response. Both are in Effect, not the
 adapter; in production, put a CDN in front of `/assets/`.
