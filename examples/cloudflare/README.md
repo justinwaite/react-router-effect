@@ -99,25 +99,26 @@ const app = HttpRouter.toWebHandler(App.pipe(Layer.provideMerge(TracerLive)));
 
 ## Work after the response
 
-`runInBackground` in `app/lib/background.server.ts` runs an Effect with Cloudflare's `waitUntil`.
-The package does not export it, because `cloudflare:workers` exists only in workerd.
+`runInBackground` in `app/lib/background.server.ts` runs an Effect with the `waitUntil` of the
+request's execution context. The package does not export it, because the execution context is
+Cloudflare's. `waitUntil` from `cloudflare:workers` does the same for the current request.
 
 ```ts
 export const runInBackground = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<void, never, Exclude<R, Scope.Scope>> =>
-  Effect.flatMap(Effect.context<Exclude<R, Scope.Scope>>(), (context) =>
-    Effect.sync(() => {
-      waitUntil(
-        Effect.runPromiseWith(context)(
-          effect.pipe(
-            Effect.scoped,
-            Effect.catchCause((cause) => Effect.logError("A background Effect failed", cause)),
-          ),
+): Effect.Effect<void, never, WorkerExecutionContext | Exclude<R, Scope.Scope>> =>
+  Effect.gen(function* () {
+    const executionContext = yield* WorkerExecutionContext;
+    const context = yield* Effect.context<Exclude<R, Scope.Scope>>();
+    executionContext.waitUntil(
+      Effect.runPromiseWith(context)(
+        effect.pipe(
+          Effect.scoped,
+          Effect.catchCause((cause) => Effect.logError("A background Effect failed", cause)),
         ),
-      );
-    }),
-  );
+      ),
+    );
+  });
 ```
 
 The Effect gets the services of the route that calls it. The request's scope closes at the end of
@@ -135,9 +136,14 @@ React Router gets the Worker's own `Request`. Its URL is already final, so a Wor
 `HttpMiddleware.xForwardedHeaders`. Middleware can change the `HttpServerRequest`, for example its URL or
 headers. On a Web server, that change does not reach React Router.
 
-`wrangler.jsonc` sets the `enable_request_signal` compatibility flag. With the flag, a client that
-leaves aborts the request's signal. Then React Router stops streamed promises, and route code sees
-the abort. Without the flag, route code does not see a client that leaves.
+With the `enable_request_signal` compatibility flag, a client that disconnects aborts the request's
+signal. Then React Router stops streamed promises, and route code sees the abort. The flag is the
+default for a compatibility date of 2026-11-17 or later. The example's date is 2026-10-01, so
+`wrangler.jsonc` sets the flag. Without the flag, route code does not see a client that leaves.
+
+The tests check one case: a client that cancels a streamed body aborts the route's signal. In
+Miniflare, a client that left before the response did not abort it. Production Workers are not
+tested.
 
 ## Client files
 
@@ -154,9 +160,9 @@ Vite's middleware on Effect's Node server.
 ## Scheduler
 
 The adapter shares no fibers across requests. The runtime's services can start fibers that
-requests share, such as a poller or a cache that refreshes itself. For those fibers, read the note
-about Workers in the docs of Effect's `HttpRouter.toWebHandler`. Effect advises
-`new Scheduler.MixedScheduler("sync")`.
+requests share, such as a poller or a cache that refreshes itself. For those fibers, read the
+"Gotchas" in the JSDoc of `HttpRouter.toWebHandler` (`effect/http`) and of
+`Scheduler.MixedScheduler` (`effect`). Effect advises `new Scheduler.MixedScheduler("sync")`.
 
 ## Tests
 

@@ -48,7 +48,8 @@ beforeAll(async () => {
     }),
   );
   await worker.ready;
-});
+  // Bundling and a cold start of workerd take longer than Vitest's default hook timeout.
+}, 60_000);
 
 afterAll(() => worker.dispose());
 

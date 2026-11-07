@@ -3,16 +3,27 @@ import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { Schema } from "effect";
+
 /** The example's directory. */
 // `.href`: the Worker types replace the global `URL`, which Node's `fileURLToPath` does not take.
 export const root = fileURLToPath(new URL("..", import.meta.url).href);
 
 /**
- * The environment of a child process, without Vitest's flag: the Vite config
- * leaves the app's plugins out under Vitest. Node leaves out a variable whose
- * value is `undefined`.
+ * The environment of a child process, without Vitest's variables and without
+ * the `NODE_ENV` that Vitest sets: the Vite config leaves the app's plugins
+ * out under Vitest, and each tool sets `NODE_ENV` itself. Node leaves out a
+ * variable whose value is `undefined`.
  */
-export const childEnv = (): NodeJS.ProcessEnv => ({ ...process.env, VITEST: undefined });
+export const childEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  ...Object.fromEntries(
+    Object.keys(process.env)
+      .filter((key) => key.startsWith("VITEST"))
+      .map((key) => [key, undefined]),
+  ),
+  NODE_ENV: undefined,
+});
 
 /** A port nothing listens on. */
 const freePort = () =>
@@ -87,11 +98,13 @@ export const startServer = async (
 };
 
 /** What the Worker's isolate saw, from `/stats`. */
-export interface Stats {
-  readonly opened: number;
-  readonly closed: number;
-  readonly background: number;
-}
+const Stats = Schema.Struct({
+  opened: Schema.Number,
+  closed: Schema.Number,
+  background: Schema.Number,
+});
+
+export type Stats = typeof Stats.Type;
 
 /** Reads `/stats` until `done` holds, or 5 seconds pass. */
 export const statsUntil = async (
@@ -100,7 +113,9 @@ export const statsUntil = async (
 ): Promise<Stats> => {
   const deadline = Date.now() + 5_000;
   for (;;) {
-    const stats: Stats = await (await fetch(`${origin}/stats`)).json();
+    const stats = await Schema.decodeUnknownPromise(Stats)(
+      await (await fetch(`${origin}/stats`)).json(),
+    );
     if (done(stats) || Date.now() > deadline) return stats;
     await delay(50);
   }

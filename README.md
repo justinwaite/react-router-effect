@@ -136,7 +136,7 @@ export default defineConfig({
 
 ```bash
 react-router build
-NODE_ENV=production node server.js
+NODE_ENV=production node server.js   # React's server build reads NODE_ENV
 ```
 
 For development with Vite, the Node example's `server.js` serves the app through
@@ -522,8 +522,9 @@ request has the changes that middleware makes to the `HttpServerRequest`, such a
 the runtime's own request. The README of each example describes the requests of its platform.
 
 If the client leaves while React Router runs or while the body streams, the response ends early, and
-the request signal aborts. A completed response never aborts it. On Cloudflare Workers, this needs
-the `enable_request_signal` compatibility flag.
+the request signal aborts. A completed response never aborts it. On Cloudflare Workers, the abort
+comes from Cloudflare's own request signal. For the conditions of that abort, read the
+[Cloudflare example](examples/cloudflare/README.md#requests).
 
 React Router logs and answers the errors of route code. If the adapter's own steps fail, for example
 a `loadContext` that dies, the adapter logs the error with `Effect.logError`. Then it answers an
