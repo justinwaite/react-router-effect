@@ -7,7 +7,7 @@ measure the adapter against React Router's own servers.
 ```sh
 vp install              # in the repository root
 vp run build            # the package, in the repository root
-cd examples/basic
+cd examples/node
 vp run dev              # Vite in middleware mode, on http://localhost:3000
 vp run build && vp run start
 vp run typecheck        # react-router typegen, then tsc with the route check

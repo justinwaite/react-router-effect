@@ -64,7 +64,7 @@ jobs:
 
       # The example's routes import the types React Router generates.
       - name: Generate the example's route types
-        working-directory: examples/basic
+        working-directory: examples/node
         run: vp exec react-router typegen
 
       - name: Format, lint & type check

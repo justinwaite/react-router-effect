@@ -15,7 +15,7 @@ with 50 connections. Each number is the median of 3 rounds:
 | action, Effect          | 3,638 req/s          | 3,429 req/s      | 2,679 req/s         | 78%        |
 | client file             | n/a                  | 11,388 req/s     | 4,582 req/s         | 40%        |
 
-From `examples/basic`, `node bench/http.ts --gaps` splits the time per request, for Express and for
+From `examples/node`, `node bench/http.ts --gaps` splits the time per request, for Express and for
 the adapter. Effect's HTTP server costs less per request than Express with `express.static` on a
 GET. The adapter loses that gain in converting the request and React Router's response. Both bodies
 stream through an Effect `Stream`, so the app's middleware can work on them. This costs the most

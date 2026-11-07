@@ -33,7 +33,7 @@ Effect 4.1 (`effect@^4.1.0`). Only `react-router-effect/vite` imports `@effect/p
 
 ## Get started
 
-[`examples/basic`](examples/basic) is an app with these files. It also has development with
+[`examples/node`](examples/node) is an app with these files. It also has development with
 Vite, tests against the production build, and benchmarks.
 
 ### 1. Create the route factory

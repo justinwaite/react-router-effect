@@ -1,5 +1,5 @@
 {
-  "name": "react-router-effect-example-basic",
+  "name": "react-router-effect-example-node",
   "private": true,
   "description": "A React Router framework-mode app served by react-router-effect on Effect's Node HTTP server.",
   "type": "module",
