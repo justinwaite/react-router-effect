@@ -296,6 +296,33 @@ const exportedSpan = (context: Context.Context<never>): Tracer.Span | undefined 
     : undefined;
 };
 
+/**
+ * The `http.route` of a routed pattern, such as `/posts/:id`. React Router
+ * joins the route paths, so a root route without a path leaves out the
+ * leading slash.
+ */
+const httpRoute = (pattern: string): string => (pattern.startsWith("/") ? pattern : `/${pattern}`);
+
+/**
+ * Sets `http.route` on the request's span to the pattern of the routes that
+ * React Router matched, after React Router answered, also for a page that
+ * runs no route function. React Router 8 gives the pattern to a request
+ * handler hook. A request that matched no route keeps the router's `/*`.
+ */
+const routeLabel: ServerInstrumentation = {
+  handler(handler) {
+    handler.instrument({
+      async request(handleRequest, { context }) {
+        const { meta } = await handleRequest();
+        const span = context?.get(requestSpanKey);
+        if (span !== undefined && meta !== undefined && meta.pattern !== "") {
+          span.attribute("http.route", httpRoute(meta.pattern));
+        }
+      },
+    });
+  },
+};
+
 /** What a route function produced: its value, or what it threw. */
 type Settled =
   | { readonly ok: true; readonly value: unknown }
@@ -373,9 +400,7 @@ const traced =
     const requestSpan = args.context.get(requestSpanKey);
     if (requestSpan === undefined) return fn(args, ...rest);
     if (typeof args.pattern === "string") {
-      // React Router joins the route paths, so a root route without a path leaves out the leading slash.
-      const route = args.pattern.startsWith("/") ? args.pattern : `/${args.pattern}`;
-      requestSpan.attribute("http.route", route);
+      requestSpan.attribute("http.route", httpRoute(args.pattern));
     }
     const store = args.context.get(storeKey);
     const program = Effect.useSpan(
@@ -499,6 +524,7 @@ interface LoadedBuild {
 const makeBuildLoader = (
   options: Options,
   mode: string | undefined,
+  instrumentations: ReadonlyArray<ServerInstrumentation>,
 ): Effect.Effect<LoadedBuild> => {
   let cached: LoadedBuild | undefined;
   return Effect.promise(async () => {
@@ -506,7 +532,10 @@ const makeBuildLoader = (
     if (cached?.build !== build) {
       cached = {
         build,
-        handler: createRequestHandler(wrapBuild(build, options.factory.handlers, []), mode),
+        handler: createRequestHandler(
+          wrapBuild(build, options.factory.handlers, instrumentations),
+          mode,
+        ),
       };
     }
     return cached;
@@ -607,7 +636,7 @@ export const make = <const O extends Options>(
   ServesClientAssets<O> extends true ? ClientAssetServices : never
 > => {
   const mode = options.mode ?? process.env.NODE_ENV;
-  const loadBuild = makeBuildLoader(options, mode);
+  const loadBuild = makeBuildLoader(options, mode, []);
   const settled = typeof options.build !== "function" || mode === "production";
   const made = Effect.gen(function* () {
     if (!settled) return serve(options, loadBuild, undefined);
@@ -768,7 +797,14 @@ const makeReactRouter = <R>(
 ): Effect.Effect<ReactRouter["Service"], never, R> =>
   Effect.gen(function* () {
     const mode = options.mode ?? process.env.NODE_ENV;
-    const loadBuild = makeBuildLoader(options, mode);
+    // The tracer of the layer. With the native tracer, whose spans go
+    // nowhere, React Router gets no hook, and does no work for it on a request.
+    const tracer = yield* Effect.tracer;
+    const loadBuild = makeBuildLoader(
+      options,
+      mode,
+      tracer === Tracer.nativeTracer ? [] : [routeLabel],
+    );
     const handlers = options.factory.handlers;
     // The request's own services, such as its scope and its span, win over
     // the services of the layer, as `HttpApiMiddleware` merges them.
