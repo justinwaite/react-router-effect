@@ -3,7 +3,7 @@ import * as Http from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Effect, Layer, ManagedRuntime, Option, Predicate, Tracer } from "effect";
 import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
-import { RouterContextProvider, type ServerBuild } from "react-router";
+import { data, RouterContextProvider, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
@@ -251,6 +251,9 @@ describe("spans", () => {
     };
     expect(exitOf("react-router.loader redirect")).toBe("Success");
     expect(exitOf("react-router.loader broken")).toBe("Failure");
+    expect(
+      spans.filter((span) => span.name === "GET").map((span) => span.attributes.get("http.route")),
+    ).toEqual(["/redirect", "/broken"]);
   });
 
   it("keeps React Router's cookies out of the server span", async () => {
@@ -325,6 +328,168 @@ describe("http.route", () => {
       expect([untracedPatterns, storedPatterns()]).toEqual([0, 1]);
     } finally {
       set.mockRestore();
+    }
+  });
+});
+
+describe("http.route with spans of the app's own middleware", () => {
+  /** Two route-scoped router middlewares, each running React Router's requests in a span of its own. */
+  const Checked = HttpRouter.middleware((app) => Effect.withSpan(app, "app.check")).combine(
+    HttpRouter.middleware((app) => Effect.withSpan(app, "app.audit")),
+  ).layer;
+
+  /** A global router middleware with a span, which wraps every route of the app. */
+  const Global = HttpRouter.middleware((app) => Effect.withSpan(app, "app.global"), {
+    global: true,
+  });
+
+  const App = Layer.mergeAll(ReactRouter.routes.pipe(Layer.provide(Checked)), Global).pipe(
+    Layer.provide(
+      ReactRouter.layer({
+        build: buildOf({
+          root: { id: "root", path: "", module: { default: () => null } },
+          post: route("post", "posts/:id", {
+            default: () => null,
+            loader: Effect.fn("postLoader")(function* () {
+              return yield* Effect.succeed({ post: true });
+            }),
+            action: Effect.fn("postAction")(function* () {
+              return yield* Effect.succeed({ saved: true });
+            }),
+          }),
+          file: route("file", "files/:id", { loader: () => new Response("file") }),
+          broken: route("broken", "broken/:id", {
+            default: () => null,
+            loader: async () => {
+              throw new Error("boom");
+            },
+          }),
+          moved: route("moved", "moved/:id", {
+            loader: Effect.fn("movedLoader")(function* () {
+              return yield* Respond.redirect("/posts/1", 303);
+            }),
+          }),
+          gone: route("gone", "gone/:id", {
+            default: () => null,
+            loader: async () => {
+              throw data(null, { status: 404 });
+            },
+          }),
+        }),
+        factory: routeFactory,
+        mode: "test",
+      }),
+    ),
+  );
+
+  /** Serves `App` on Effect's Node server with `layer` for the server, and returns its origin. */
+  const serve = async (layer: Layer.Layer<never> = Layer.empty) => {
+    const runtime = ManagedRuntime.make(
+      HttpRouter.serve(App, { disableLogger: true, disableListenLog: true }).pipe(
+        Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+        Layer.provide(Layer.succeed(Tracer.Tracer)(recordingTracer)),
+        Layer.provide(layer),
+      ),
+    );
+    const address = (await runtime.runPromise(HttpServer.HttpServer)).address;
+    if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    return { origin: `http://localhost:${address.port}`, stop: () => runtime.dispose() };
+  };
+
+  let server: Awaited<ReturnType<typeof serve>>;
+
+  beforeAll(async () => {
+    server = await serve();
+  });
+
+  afterAll(() => server.stop());
+
+  /** The `http.route` of each span that has one. */
+  const routes = () =>
+    Object.fromEntries(
+      spans.flatMap((span) => {
+        const value = span.attributes.get("http.route");
+        return value === undefined ? [] : [[span.name, value]];
+      }),
+    );
+
+  it.each([
+    ["GET", "/posts/1", "/posts/:id"],
+    ["GET", "/posts/1.data", "/posts/:id"],
+    ["POST", "/posts/1.data", "/posts/:id"],
+    ["HEAD", "/posts/1", "/posts/:id"],
+    ["GET", "/files/1", "/files/:id"],
+  ])("sets the pattern of %s %s on the server span only", async (method, path, pattern) => {
+    const response = await fetch(`${server.origin}${path}`, {
+      method,
+      headers: { origin: server.origin },
+    });
+    expect(response.status).toBe(200);
+    await ended();
+    // Effect's router writes its own `*` on the span that is current when it routes.
+    expect(routes()).toEqual({ [method]: pattern, "app.global": "*" });
+  });
+
+  it.each([
+    ["/broken/1", 500, "/broken/:id"],
+    ["/moved/1", 303, "/moved/:id"],
+    ["/gone/1", 404, "/gone/:id"],
+  ])(
+    "sets the pattern of %s, which answers %i, on the server span",
+    async (path, status, pattern) => {
+      const response = await fetch(`${server.origin}${path}`, { redirect: "manual" });
+      expect(response.status).toBe(status);
+      await ended();
+      expect(routes()).toEqual({ GET: pattern, "app.global": "*" });
+    },
+  );
+
+  it("nests React Router's spans under the middleware spans", async () => {
+    await fetch(`${server.origin}/posts/1`);
+    await ended();
+    expect(tree()).toBe(
+      [
+        "GET",
+        "  app.global",
+        "    app.audit",
+        "      app.check",
+        "        react-router.loader post",
+        "          postLoader",
+      ].join("\n"),
+    );
+  });
+
+  it("finds the server span of a request that continues a trace from its headers", async () => {
+    const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    await fetch(`${server.origin}/posts/1`, { headers: { traceparent } });
+    await ended();
+    expect(spanNamed("GET").traceId).toBe("0af7651916cd43dd8448eb211c80319c");
+    expect(routes()).toEqual({ GET: "/posts/:id", "app.global": "*" });
+  });
+
+  it("adds no spans to a request whose server span is disabled", async () => {
+    const disabled = await serve(HttpMiddleware.layerTracerDisabledForUrls(["/posts/1"]));
+    try {
+      await fetch(`${disabled.origin}/posts/1`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(spans.some((span) => span.name.startsWith("react-router."))).toBe(false);
+      expect(spans.some((span) => span.attributes.get("http.route") === "/posts/:id")).toBe(false);
+    } finally {
+      await disabled.stop();
+    }
+  });
+
+  it("sets the pattern on the server span of Effect's Web handler", async () => {
+    const app = HttpRouter.toWebHandler(
+      App.pipe(Layer.provideMerge(Layer.succeed(Tracer.Tracer)(recordingTracer))),
+      { disableLogger: true },
+    );
+    try {
+      await (await app.handler(new Request("http://localhost/posts/1"))).text();
+      await ended();
+      expect(routes()).toEqual({ GET: "/posts/:id", "app.global": "*" });
+    } finally {
+      await app.dispose();
     }
   });
 });

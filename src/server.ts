@@ -33,6 +33,7 @@ import {
   Exit,
   Layer,
   Option,
+  Predicate,
   Record,
   Scope,
   Stream,
@@ -129,24 +130,30 @@ const droppedCookies = (
 // ---------------------------------------------------------------------------
 
 /**
- * The span of a traced request: the server span of Effect's HTTP tracer, with
- * a tracer that exports spans. Without it, the adapter adds no spans.
+ * The server span of a traced request, which gets `http.route`. Without it,
+ * the adapter adds no spans. The `react-router.*` spans nest under the
+ * request fiber's own span instead, through the request store.
  */
 const requestSpanKey: RouterContext<Tracer.Span | undefined> = createContext<
   Tracer.Span | undefined
 >(undefined);
 
 /**
- * The span of the request fiber, when a tracer exports it: not the native
- * tracer, whose spans go nowhere, and not an unsampled span.
+ * The server span of the request, when a tracer exports it: not the native
+ * tracer, whose spans go nowhere, and not an unsampled span. A route-scoped
+ * router middleware can open spans of its own between the request fiber's
+ * span and the server span, so the search goes up to the span of kind
+ * `server` that Effect's HTTP tracer opens. It runs once per request. The
+ * search goes by kind: an app's own span of kind `server` inside the request
+ * would get `http.route` instead.
  */
-const exportedSpan = (context: Context.Context<never>): Tracer.Span | undefined => {
-  const span = Context.getOrUndefined(context, Tracer.ParentSpan);
-  return span?._tag === "Span" &&
-    span.sampled &&
-    Context.get(context, Tracer.Tracer) !== Tracer.nativeTracer
-    ? span
-    : undefined;
+const serverSpan = (context: Context.Context<never>): Tracer.Span | undefined => {
+  if (Context.get(context, Tracer.Tracer) === Tracer.nativeTracer) return undefined;
+  let span = Context.getOrUndefined(context, Tracer.ParentSpan);
+  while (Predicate.isTagged(span, "Span") && span.kind !== "server") {
+    span = Option.getOrUndefined(span.parent);
+  }
+  return Predicate.isTagged(span, "Span") && span.sampled ? span : undefined;
 };
 
 /**
@@ -157,10 +164,11 @@ const exportedSpan = (context: Context.Context<never>): Tracer.Span | undefined 
 const httpRoute = (pattern: string): string => (pattern.startsWith("/") ? pattern : `/${pattern}`);
 
 /**
- * Sets `http.route` on the request's span to the pattern of the routes that
- * React Router matched, after React Router answered, also for a page that
- * runs no route function. React Router 8 gives the pattern to a request
- * handler hook. A request that matched no route keeps the router's `*`.
+ * Sets `http.route` on the server span to the pattern of the routes that
+ * React Router matched, once per request, after React Router answered. React
+ * Router 8 gives the pattern to this request handler hook, also for a page
+ * that runs no route function. A request that matched no route keeps the
+ * router's `*`.
  */
 const routeLabel: ServerInstrumentation = {
   handler(handler) {
@@ -219,8 +227,6 @@ const isSpanError = (error: unknown): boolean => {
 /** What every route function gets, as far as tracing reads it. */
 interface TracedArgs {
   readonly context: Readonly<RouterContextProvider>;
-  /** The routed pattern of the request, such as `/posts/:id`. */
-  readonly pattern?: string | undefined;
 }
 
 /** The kind of route function, as React Router names it. */
@@ -228,8 +234,7 @@ type Operation = "middleware" | "loader" | "action";
 
 /**
  * Runs a route function in a span of its own when the request is traced,
- * such as `react-router.loader routes/home`, and sets `http.route` on the
- * request's span.
+ * such as `react-router.loader routes/home`. `routeLabel` sets `http.route`.
  *
  * The spans follow React Router's structure. A middleware's span is the
  * parent of everything its `next()` runs: the next middleware, then the
@@ -250,11 +255,7 @@ const traced =
     fn: (args: Args, ...rest: Rest) => Promise<unknown>,
   ) =>
   (args: Args, ...rest: Rest): Promise<unknown> => {
-    const requestSpan = args.context.get(requestSpanKey);
-    if (requestSpan === undefined) return fn(args, ...rest);
-    if (typeof args.pattern === "string") {
-      requestSpan.attribute("http.route", httpRoute(args.pattern));
-    }
+    if (args.context.get(requestSpanKey) === undefined) return fn(args, ...rest);
     const store = args.context.get(storeKey);
     const program = Effect.useSpan(
       `react-router.${operation} ${routeId}`,
@@ -624,7 +625,7 @@ const handleRequest = (
         ? new Request(converted, { signal: AbortSignal.any([converted.signal, controller.signal]) })
         : converted;
     routerContext.set(handlers.requestContext, fiberContext);
-    routerContext.set(requestSpanKey, exportedSpan(fiberContext));
+    routerContext.set(requestSpanKey, serverSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
     const setCookies = response.headers.getSetCookie();
     const cookies = Cookies.fromSetCookie(setCookies);

@@ -590,11 +590,11 @@ instrumentation traces nest there too, such as a database driver that a promise 
 Without a server span, or with Effect's native tracer, whose spans go nowhere, the adapter adds no
 spans and no cost.
 
-On React Router 8, the adapter sets `http.route` on the server span to the pattern of the matched
-routes, such as `/todos/:id`. It does this also for a page that runs no route function. A request
-that matches no route keeps the router's `*`. On React Router 7, a page that runs no route function
-also keeps `*`. `ReactRouter.layer` reads the tracer once, at layer build. So it does not see a
-tracer that the app provides only inside a request.
+The adapter sets `http.route` on the server span to the pattern of the matched routes, such as
+`/todos/:id`, once per request. It does this also for a page that runs no route function. A router
+middleware that opens a span of its own does not change that: the pattern still goes on the server
+span. A request that matches no route keeps the router's `*`. `ReactRouter.layer` reads the tracer
+once, at layer build. So it does not see a tracer that the app provides only inside a request.
 
 ## Route functions
 
@@ -685,9 +685,8 @@ Type '{}' is missing the following properties from type ...:
 
 - Effect 4.1 or later, and `skipLibCheck`. The brand augments `Effect`, and TypeScript cannot test
   the variance annotations of that augmentation.
-- For the adapter, React Router 8.3 or later, or React Router 7.16 or later with
-  `future.v8_middleware`. The adapter gives React Router a `RouterContextProvider` as its load
-  context, and React Router 7 accepts one only with that flag.
+- For the adapter, React Router 8.3 or later. The route factory, `makeLoader`, `makeAction` and
+  `makeMiddleware` also support React Router 7.16 or later.
 - A route module export must be a function. A bare `Effect` value is not a loader.
 - Prerendering (`prerender`) and RSC mode call the build without the adapter.
 

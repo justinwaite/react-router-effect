@@ -12,9 +12,9 @@ The adapter's API is unstable, and a minor version can change it. Every export o
 - `ReactRouter.routes` registers React Router as the catch-all route of the app's router. A route of the app wins over it. A GET route of the app also answers HEAD, as it does in Express.
 - `ReactRouterAssets.layer` serves the client build as routes. It caches the hashed directory of the build's manifest for a year as immutable, and each other file for an hour. A directory with an `index.html` serves that file, and a root `index.html` serves `/`. The layer serves no dotfiles. If it cannot read the client build, the server fails to start with `ReactRouterAssets.ClientBuildError`.
 - `ReactRouterVite.layer(vite, loadApp)` serves the app in development on Node. It passes each request to Vite first. Then it serves the request with the `App` that `loadApp` returns, and it builds a new `App` after an edit. `ReactRouterVite.ViteDevServer` takes an optional `ssrFixStacktrace`, which maps the stack of an error to the source files.
-- On React Router 8, `http.route` on the server span is the pattern of the matched routes, also for a page that runs no route function.
+- `http.route` on the server span is the pattern of the matched routes. This is also true for a page that runs no route function, and under a router middleware that opens a span of its own.
 
-Removed: `ReactRouterHttp` with `make`, `Options`, `App`, `BuildSource` and `ClientAssetServices`, the `clientAssets` and `requestContext` options, and `ReactRouterVite.devMiddleware`. On React Router 7, the adapter needs `future.v8_middleware`. The package now requires Node 22 or later (`engines.node`).
+Removed: `ReactRouterHttp` with `make`, `Options`, `App`, `BuildSource` and `ClientAssetServices`, the `clientAssets` and `requestContext` options, and `ReactRouterVite.devMiddleware`. The adapter requires React Router 8.3 or later. The route factory and its wrappers still support React Router 7.16. The package now requires Node 22 or later (`engines.node`).
 
 To migrate, export an `App` layer from `server/app.ts`, and serve it from `server.js` with `HttpRouter.serve`. A route-scoped router middleware replaces `requestContext`. Before:
 
