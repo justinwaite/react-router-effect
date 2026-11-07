@@ -3,7 +3,7 @@
  * router, as the `express.static` lines of React Router's Express template
  * do.
  *
- * @since 3.0.0
+ * @since 2.2.0
  */
 import { Array as Arr, Data, Effect, FileSystem, type Layer, Option, Path } from "effect";
 import {
@@ -22,7 +22,7 @@ import { ReactRouter } from "./server.ts";
  * `assetsBuildDirectory` is relative to the working directory of the server,
  * so `directory` is the path that it resolved to.
  *
- * @since 3.0.0
+ * @since 2.2.0
  */
 export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
   readonly message: string;
