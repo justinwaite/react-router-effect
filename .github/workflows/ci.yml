@@ -78,5 +78,15 @@ jobs:
       - name: Test
         run: vp test run
 
+      # Each example's tests build the app and serve it in a child process. They
+      # import the package through its built exports, from the pack step above.
+      - name: Test the Node example
+        working-directory: examples/node
+        run: vp test run
+
+      - name: Test the Cloudflare example
+        working-directory: examples/cloudflare
+        run: vp test run
+
       - name: Type check the built package as a consumer
         run: vp run check:consumer
