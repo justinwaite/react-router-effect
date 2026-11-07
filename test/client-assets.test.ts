@@ -33,6 +33,8 @@ mkdirSync(join(directory, "prerendered"));
 writeFileSync(join(directory, "prerendered", "index.html"), "<p>prerendered</p>");
 writeFileSync(join(directory, ".vite", "manifest.json"), "{}");
 writeFileSync(join(directory, "read me.txt"), "spaced");
+// The router reads a `:` in a path as the start of a parameter.
+writeFileSync(join(directory, "a:b.txt"), "colon");
 
 const routeFactory = makeEffectRouteFactory()(() => ({}));
 
@@ -346,13 +348,17 @@ describe("ReactRouterAssets.layer", () => {
   const requestLogs = () => messages.filter((message) => message === "Sent HTTP response").length;
 
   /**
-   * Serves React Router and the assets layer with `options`, with the
-   * server's request logger, and starts it on a free port.
+   * Serves React Router, the assets layer and the app's `routes` with
+   * `options`, with the server's request logger, and starts it on a free port.
    */
-  const startApp = async (options: ReactRouterHttp.ReactRouter.Options) => {
+  const startApp = async (
+    options: ReactRouterHttp.ReactRouter.Options,
+    routes: Layer.Layer<never, never, HttpRouter.HttpRouter> = Layer.empty,
+  ) => {
     const App = Layer.mergeAll(
       ReactRouter.routes.pipe(Layer.provide(RouteHeader)),
       ReactRouterAssets.layer.pipe(Layer.provide(HttpRouter.disableLogger)),
+      routes,
       HttpRouter.middleware(HttpMiddleware.compression({ minSize: 0 }), { global: true }),
     ).pipe(Layer.provide(ReactRouter.layer(options)));
     const runtime = ManagedRuntime.make(
@@ -450,9 +456,137 @@ describe("ReactRouterAssets.layer", () => {
     );
   });
 
-  it("registers no hashed directory for a manifest at the root of publicPath", async () => {
+  it("caches every file for an hour for a manifest at the root of publicPath", async () => {
     const response = await fetch(`${withoutHashed.origin}/assets/entry-abc123.js`);
-    expect(await response.text()).toBe("router /assets/entry-abc123.js");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(await response.text()).toBe("export {};");
+    const missing = await fetch(`${withoutHashed.origin}/assets/missing.js`);
+    expect(await missing.text()).toBe("router /assets/missing.js");
+  });
+
+  it("caches another file of the client build for an hour, for GET and HEAD", async () => {
+    const get = await fetch(`${served.origin}/favicon.svg`);
+    expect(get.status).toBe(200);
+    expect(get.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(get.headers.get("content-type")).toContain("image/svg+xml");
+    expect(await get.text()).toBe("<svg />");
+    const head = await fetch(`${served.origin}/favicon.svg`, {
+      method: "HEAD",
+      headers: { "accept-encoding": "identity" },
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(head.headers.get("content-length")).toBe("7");
+    expect(await head.text()).toBe("");
+  });
+
+  it("answers a revalidation with 304 and a range with 206", async () => {
+    const first = await fetch(`${served.origin}/favicon.svg`);
+    const etag = first.headers.get("etag") ?? "";
+    expect(etag).not.toBe("");
+    const revalidated = await fetch(`${served.origin}/favicon.svg`, {
+      headers: { "if-none-match": etag },
+    });
+    expect(revalidated.status).toBe(304);
+    const range = await fetch(`${served.origin}/favicon.svg`, {
+      headers: { range: "bytes=0-3", "accept-encoding": "identity" },
+    });
+    expect(range.status).toBe(206);
+    expect(await range.text()).toBe("<svg");
+  });
+
+  it.each([
+    ["a dotfile", "/.vite/manifest.json", "GET", "router /.vite/manifest.json"],
+    ["an encoded dotfile", "/%2evite/manifest.json", "GET", "router /%2evite/manifest.json"],
+    ["a directory without an index file", "/nested/", "GET", "router /nested/"],
+    ["a directory without an index file or a slash", "/nested", "GET", "router /nested"],
+    // The root route answers `/` with the document.
+    ["the root", "/", "GET", "document"],
+    ["a POST", "/favicon.svg", "POST", "router action"],
+    ["a path that only a parameter would match", "/aother.txt", "GET", "router /aother.txt"],
+  ])("passes %s on to React Router", async (_, path, method, expected) => {
+    const response = await fetch(`${served.origin}${path}`, {
+      method,
+      headers: { origin: served.origin },
+    });
+    expect(await response.text()).toBe(expected);
+  });
+
+  it("serves a directory's index file, such as a prerendered page, as express.static does", async () => {
+    const response = await fetch(`${served.origin}/prerendered/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(await response.text()).toBe("<p>prerendered</p>");
+  });
+
+  it("redirects a directory path without its trailing slash, as express.static does", async () => {
+    const page = await fetch(`${served.origin}/prerendered?x=1`, { redirect: "manual" });
+    expect(page.status).toBe(301);
+    expect(page.headers.get("location")).toBe("/prerendered/?x=1");
+    const prefixed = await fetch(`${underPrefix.origin}/static/prerendered`, {
+      redirect: "manual",
+    });
+    expect(prefixed.status).toBe(301);
+    expect(prefixed.headers.get("location")).toBe("/static/prerendered/");
+  });
+
+  it("passes the root on to React Router when the client build has an index file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "client-assets-root-"));
+    writeFileSync(join(root, "index.html"), "<p>home</p>");
+    const app = await startApp({ ...options, build: makeBuild({ assetsBuildDirectory: root }) });
+    const response = await fetch(`${app.origin}/`);
+    const text = await response.text();
+    await app.stop();
+    rmSync(root, { recursive: true, force: true });
+    expect(text).toBe("document");
+  });
+
+  it("serves a file whose name the URL encodes", async () => {
+    expect(await (await fetch(`${served.origin}/read%20me.txt`)).text()).toBe("spaced");
+  });
+
+  it("serves a file with a : in its name", async () => {
+    expect(await (await fetch(`${served.origin}/a:b.txt`)).text()).toBe("colon");
+  });
+
+  it("serves a file that is added after the server starts only after a restart", async () => {
+    writeFileSync(join(directory, "later.txt"), "later");
+    try {
+      expect(await (await fetch(`${served.origin}/later.txt`)).text()).toBe("router /later.txt");
+    } finally {
+      rmSync(join(directory, "later.txt"));
+    }
+  });
+
+  it("serves the other files under the build's publicPath", async () => {
+    const response = await fetch(`${underPrefix.origin}/static/favicon.svg`);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(await response.text()).toBe("<svg />");
+    expect(await (await fetch(`${underPrefix.origin}/favicon.svg`)).text()).toBe(
+      "router /favicon.svg",
+    );
+  });
+
+  it("fails with a ClientBuildError for a file with a * in its name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "client-assets-star-"));
+    writeFileSync(join(root, "a*b.txt"), "star");
+    try {
+      await expect(
+        startApp({ ...options, build: makeBuild({ assetsBuildDirectory: root }) }),
+      ).rejects.toMatchObject({ _tag: "ClientBuildError", directory: root });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the server's start for a route of the app with the path of a file", async () => {
+    await expect(
+      startApp(
+        { ...options, build: makeBuild({ assets: hashedAssets }) },
+        HttpRouter.add("GET", "/favicon.svg", HttpServerResponse.text("app")),
+      ),
+    ).rejects.toThrow("Method 'GET' already declared for route '/favicon.svg'");
   });
 
   it("registers nothing and reads nothing for a development build", async () => {
