@@ -1,9 +1,14 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Context, Data, Effect, Layer, ManagedRuntime, Option } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
-import type { LoaderFunctionArgs, ServerBuild } from "react-router";
+import { Context, Data, Effect, Layer, Logger, ManagedRuntime, Option } from "effect";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import {
+  createContext,
+  RouterContextProvider,
+  type LoaderFunctionArgs,
+  type ServerBuild,
+} from "react-router";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
@@ -26,6 +31,27 @@ class Greeting extends Context.Service<Greeting, { readonly text: string }>()("t
 class CurrentUser extends Context.Service<CurrentUser, { readonly id: string }>()(
   "test/CurrentUser",
 ) {}
+
+/** A service of the app, which `loadContext` reads from the layer. */
+class Tenant extends Context.Service<Tenant, { readonly name: string }>()("test/Tenant") {}
+
+/** The value that `loadContext` sets, for plain loaders to read with `context.get`. */
+const tenantKey = createContext<string>();
+
+/**
+ * Sets `tenantKey` from the `Tenant` service and the `x-tenant` header. It
+ * dies when the request has an `x-test-die` header.
+ */
+const loadContext = (request: HttpServerRequest.HttpServerRequest) =>
+  Effect.gen(function* () {
+    if (request.headers["x-test-die"] !== undefined) {
+      return yield* Effect.die(new Error("load context failed"));
+    }
+    const tenant = yield* Tenant;
+    const context = new RouterContextProvider();
+    context.set(tenantKey, `${tenant.name}:${request.headers["x-tenant"] ?? "none"}`);
+    return context;
+  });
 
 const routeFactory = makeEffectRouteFactory<FormError | UnhandledError>()((Respond) => ({
   errorHandlers: {
@@ -89,6 +115,10 @@ const routes = {
   url: route("url", "url", {
     loader: ({ request }: { readonly request: Request }) => Response.json({ url: request.url }),
   }),
+  tenant: route("tenant", "tenant", {
+    loader: ({ context }: { readonly context: Readonly<RouterContextProvider> }) =>
+      Response.json({ tenant: context.get(tenantKey) }),
+  }),
   page: route("page", "page", {
     default: () => null,
     action: Effect.fn("pageAction")(() => Effect.succeed({ saved: true })),
@@ -144,13 +174,30 @@ const RequestIdMiddleware = HttpRouter.middleware((app) =>
   Effect.provideService(app, RequestId, { id: "request-id-1" }),
 ).layer;
 
+const ReactRouterLive = ReactRouter.layer({
+  build,
+  factory: routeFactory,
+  mode: "test",
+  loadContext,
+}).pipe(Layer.provide(Layer.succeed(Tenant, { name: "acme" })));
+
 const App = Layer.mergeAll(
   ReactRouter.routes.pipe(Layer.provide(RequestIdMiddleware)),
   HttpRouter.add("GET", "/health", HttpServerResponse.text("ok")),
-).pipe(Layer.provide(ReactRouter.layer({ build, factory: routeFactory, mode: "test" })));
+).pipe(Layer.provide(ReactRouterLive));
+
+/** What the app's loggers received: each log's level and its message parts. */
+const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> = [];
+const capture = Logger.make(({ logLevel, message }) => {
+  logs.push({ level: logLevel, message: Array.isArray(message) ? message : [message] });
+});
+
+/** The error in the message parts of a log, if any. */
+const errorOf = (log: (typeof logs)[number]) => log.message.find((part) => part instanceof Error);
 
 const ServerLive = HttpRouter.serve(App, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+  Layer.provide(Logger.layer([capture])),
 );
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;
@@ -221,6 +268,22 @@ describe("ReactRouter.routes", () => {
   it("serves a route of the app in place of the catch-all", async () => {
     const response = await fetch(`${origin}/health`);
     expect(await response.text()).toBe("ok");
+  });
+});
+
+describe("loadContext", () => {
+  it("gives a plain loader the value it made from a service and a request header", async () => {
+    const response = await fetch(`${origin}/tenant`, { headers: { "x-tenant": "t-1" } });
+    expect(await response.json()).toEqual({ tenant: "acme:t-1" });
+  });
+
+  it("logs a loadContext that dies, and answers an empty 500", async () => {
+    logs.length = 0;
+    const response = await fetch(`${origin}/tenant`, { headers: { "x-test-die": "1" } });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(logs.map((log) => log.level)).toEqual(["Error"]);
+    expect(errorOf(logs[0]!)?.message).toBe("load context failed");
   });
 });
 

@@ -690,7 +690,9 @@ export class ReactRouter extends Context.Service<
    * mode, loads when the layer builds. Provide one value of this layer to
    * every layer that reads the service: two values load the build twice.
    */
-  static readonly layer = (options: ReactRouter.Options): Layer.Layer<ReactRouter> =>
+  static readonly layer = <R = never>(
+    options: ReactRouter.Options<R>,
+  ): Layer.Layer<ReactRouter, never, Exclude<R, Scope.Scope>> =>
     Layer.effect(ReactRouter, makeReactRouter(options));
 
   /**
@@ -711,14 +713,29 @@ export class ReactRouter extends Context.Service<
 }
 
 export declare namespace ReactRouter {
-  /** The options of {@link ReactRouter.layer}. */
-  export interface Options {
+  /** The options of {@link ReactRouter.layer}. `R` is the requirement of `loadContext`. */
+  export interface Options<R = never> {
     /** The server build: `() => import("virtual:react-router/server-build")`. */
     readonly build: BuildSource;
     /** The route factory whose runner, runtime and error model route Effects use. */
     readonly factory: { readonly handlers: RouteHandlers };
     /** React Router's server mode. Defaults to `process.env.NODE_ENV`. */
     readonly mode?: string | undefined;
+    /**
+     * Makes React Router's load context for each request, as `getLoadContext`
+     * does for `@react-router/express`. Plain loaders and actions, and
+     * `handleRequest` in `entry.server.tsx`, read its values with
+     * `context.get`. Route Effects read services from their Effect context,
+     * so an app gives them services with router middleware, not here. The
+     * adapter adds its own keys to the provider. The Effect gets the services
+     * of `R` from the layer, and the services of the request, which win over
+     * the services of the layer. A defect answers an empty 500.
+     */
+    readonly loadContext?:
+      | ((
+          request: HttpServerRequest.HttpServerRequest,
+        ) => Effect.Effect<RouterContextProvider, never, R>)
+      | undefined;
   }
 }
 
@@ -728,18 +745,36 @@ export declare namespace ReactRouter {
  * Any other build loads for each request, and gets a new React Router handler
  * when its value changes.
  */
-const makeReactRouter = Effect.fnUntraced(function* (options: ReactRouter.Options) {
-  const mode = options.mode ?? process.env.NODE_ENV;
-  const loadBuild = makeBuildLoader(options, mode);
-  if (typeof options.build === "function" && mode !== "production") {
-    return ReactRouter.of({ build: Option.none(), handle: handleRequest(options, loadBuild) });
-  }
-  const loaded = yield* loadBuild;
-  return ReactRouter.of({
-    build: Option.some(loaded.build),
-    handle: handleRequest(options, Effect.succeed(loaded)),
+const makeReactRouter = <R>(
+  options: ReactRouter.Options<R>,
+): Effect.Effect<ReactRouter["Service"], never, R> =>
+  Effect.gen(function* () {
+    const mode = options.mode ?? process.env.NODE_ENV;
+    const loadBuild = makeBuildLoader(options, mode);
+    const handlers = options.factory.handlers;
+    // The request's own services, such as its scope and its span, win over
+    // the services of the layer, as `HttpApiMiddleware` merges them.
+    const services = yield* Effect.context<R>();
+    const { loadContext } = options;
+    const provided: ReactRouter.Options["loadContext"] =
+      loadContext === undefined
+        ? undefined
+        : (request) =>
+            Effect.updateContext(loadContext(request), (requestContext: Context.Context<never>) =>
+              Context.merge(services, requestContext),
+            );
+    if (typeof options.build === "function" && mode !== "production") {
+      return ReactRouter.of({
+        build: Option.none(),
+        handle: handleRequest(handlers, loadBuild, provided),
+      });
+    }
+    const loaded = yield* loadBuild;
+    return ReactRouter.of({
+      build: Option.some(loaded.build),
+      handle: handleRequest(handlers, Effect.succeed(loaded), provided),
+    });
   });
-});
 
 /**
  * Answers the current request with React Router. Route Effects get the
@@ -748,8 +783,9 @@ const makeReactRouter = Effect.fnUntraced(function* (options: ReactRouter.Option
  * own with `Effect.scoped`.
  */
 const handleRequest = (
-  options: ReactRouter.Options,
+  handlers: RouteHandlers,
   loadBuild: Effect.Effect<LoadedBuild>,
+  loadContext: ReactRouter.Options["loadContext"],
 ): ReactRouter["Service"]["handle"] =>
   Effect.gen(function* () {
     const httpRequest = yield* HttpServerRequest.HttpServerRequest;
@@ -757,16 +793,18 @@ const handleRequest = (
     const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
     const controller = new AbortController();
     const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
-    const routerContext = new RouterContextProvider();
-    routerContext.set(options.factory.handlers.requestContext, fiberContext);
+    const routerContext =
+      loadContext === undefined ? new RouterContextProvider() : yield* loadContext(httpRequest);
+    routerContext.set(handlers.requestContext, fiberContext);
     routerContext.set(requestSpanKey, exportedSpan(fiberContext));
     const response = yield* callRouter(handler, request, routerContext, controller);
     return toHttpResponse(response, controller);
   }).pipe(
     // React Router logs and answers the errors of route code. A defect of the
-    // adapter's own steps, such as a build that does not load or React
-    // Router's handler rejecting, goes to the app's loggers, and the client
-    // gets an empty 500, as Express's error handler answers.
+    // adapter's own steps, such as a `loadContext` that dies, a build that
+    // does not load, or React Router's handler rejecting, goes to the app's
+    // loggers, and the client gets an empty 500, as Express's error handler
+    // answers.
     Effect.catchDefect((defect) =>
       Effect.logError("React Router adapter failed", defect).pipe(
         Effect.as(HttpServerResponse.empty({ status: 500 })),
