@@ -54,7 +54,7 @@ describe("documents", () => {
     expect(await second.text()).toContain(`data-testid="visitor">${name}<`);
   });
 
-  it("builds the request's services with the adapter's requestContext", async () => {
+  it("builds the request's services with the RequestServices middleware", async () => {
     const response = await fetch(`${server.origin}/legacy`, {
       headers: { "x-request-id": "req-42" },
     });

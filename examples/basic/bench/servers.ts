@@ -1,8 +1,8 @@
 /**
  * How the benchmarks serve the example's production build.
  *
- * - The adapter: `reactRouterApp`, exactly as the example serves it, on
- *   Effect's HTTP server.
+ * - The adapter: the example's `App`, on Effect's HTTP server, without the
+ *   example's compression middleware.
  * - The baselines: React Router's own request handler, without Effect's HTTP
  *   server. Their route functions run through the same route factory, which
  *   runs the Effects with the runtime and the request's services, maps their
@@ -22,12 +22,12 @@ import {
 } from "react-router";
 import type { RouteHandlers } from "react-router-effect";
 
-import type * as ServerModule from "../server/main.ts";
+import type * as ServerModule from "../server/app.ts";
 
 /** The example's directory. */
 export const root = fileURLToPath(new URL("..", import.meta.url));
 
-/** The server build of `react-router build`, which bundles `server/main.ts`. */
+/** The server build of `react-router build`, which bundles `server/app.ts`. */
 export const loadServer = (): Promise<typeof ServerModule> =>
   import(pathToFileURL(join(root, "build/server/index.js")).href);
 
@@ -54,7 +54,7 @@ export const wrapBuild = (build: ServerBuild, handlers: RouteHandlers): ServerBu
   ),
 });
 
-/** The baseline's router context: the request's services, as the adapter's `requestContext` builds them. */
+/** The baseline's router context: the request's services, as `RequestServices` provides them. */
 export const baselineContext = (server: typeof ServerModule, requestId: string | undefined) => {
   const context = new RouterContextProvider();
   context.set(

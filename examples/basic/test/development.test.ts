@@ -8,7 +8,7 @@ import { root, type ServerProcess, startServer } from "./server-process";
 let server: ServerProcess;
 
 beforeAll(async () => {
-  server = await startServer(["--dev"], { NODE_ENV: "development" });
+  server = await startServer([], { NODE_ENV: "development" });
 });
 
 afterAll(async () => {
@@ -49,6 +49,48 @@ it("applies an edit to a route on the next request", async () => {
     await expect
       .poll(async () => (await fetch(`${server.origin}/legacy`)).text(), { timeout: 5000 })
       .toContain("Edited in development");
+  } finally {
+    writeFileSync(file, source);
+  }
+});
+
+it("applies an edit to server/app.ts on the next request", async () => {
+  const file = join(root, "server/app.ts");
+  const source = readFileSync(file, "utf8");
+  try {
+    writeFileSync(
+      file,
+      source.replace('HttpServerResponse.text("ok")', 'HttpServerResponse.text("edited")'),
+    );
+    await expect
+      .poll(async () => (await fetch(`${server.origin}/health`)).text(), { timeout: 5000 })
+      .toBe("edited");
+  } finally {
+    writeFileSync(file, source);
+  }
+});
+
+it("runs the root's Effect.fn loader after an edit to the route factory", async () => {
+  const file = join(root, "app/lib/route-factory.server.ts");
+  const source = readFileSync(file, "utf8");
+  const invalidTodo = () =>
+    fetch(`${server.origin}/todos.data`, {
+      method: "POST",
+      headers: { origin: server.origin },
+      body: new URLSearchParams({ title: "" }),
+    }).then((response) => response.status);
+  try {
+    writeFileSync(
+      file,
+      source.replace(
+        "Respond.early({ error: error.message }, 422)",
+        "Respond.early({ error: error.message }, 400)",
+      ),
+    );
+    await expect.poll(invalidTodo, { timeout: 5000 }).toBe(400);
+    const response = await fetch(`${server.origin}/`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('data-testid="visitor"');
   } finally {
     writeFileSync(file, source);
   }

@@ -13,8 +13,9 @@ import { type InvalidTodo, RequestInfo, Todos, type Visitor } from "./services.s
 export const runtime = ManagedRuntime.make(Todos.layer);
 
 /**
- * The request's services. The adapter's `requestContext` adds `RequestInfo`,
- * and the root middleware provides `Visitor` around `next()`.
+ * The request's services. The `RequestServices` middleware of `server/app.ts`
+ * provides `RequestInfo`, and the root middleware provides `Visitor` around
+ * `next()`.
  */
 export const requestContext: RequestContextKey<RequestInfo | Visitor> = createContext();
 

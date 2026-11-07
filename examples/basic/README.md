@@ -18,19 +18,18 @@ node bench/http.ts      # load over HTTP, against Express and @react-router/node
 
 ## What it shows
 
-| File                              | What it shows                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| `server/app.ts`                   | `ReactRouterHttp.make`: the build, the factory, the client build, request services |
-| `server/main.ts`                  | The app's own server: listening, logging, compression, Vite in development         |
-| `server.js`                       | Starts the server through Vite in development, from the build otherwise            |
-| `app/lib/route-factory.server.ts` | The route factory, its runtime and error handler, and the `Register`               |
-| `app/lib/route-effects.check.ts`  | The route check: fails to compile on an unhandled error                            |
-| `app/root.tsx`                    | An Effect middleware that provides a service around `next()` and sets a cookie     |
-| `app/routes/home.tsx`             | An Effect loader whose data streams a promise                                      |
-| `app/routes/todos.tsx`            | An Effect action: a recovered domain error, `useFetcher<typeof action>()`          |
-| `app/routes/todos-old.ts`         | A redirect through `Respond.redirect`                                              |
-| `app/routes/legacy.tsx`           | A plain promise loader, which the adapter passes through                           |
-| `app/routes/events.ts`            | Server-sent events from an Effect `Stream`, interrupted when the client leaves     |
+| File                              | What it shows                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| `server/app.ts`                   | `App`: React Router, the client build, request services, a route of its own    |
+| `server.js`                       | Serves `App` with compression, through `ReactRouterVite.layer` in development  |
+| `app/lib/route-factory.server.ts` | The route factory, its runtime and error handler, and the `Register`           |
+| `app/lib/route-effects.check.ts`  | The route check: fails to compile on an unhandled error                        |
+| `app/root.tsx`                    | An Effect middleware that provides a service around `next()` and sets a cookie |
+| `app/routes/home.tsx`             | An Effect loader whose data streams a promise                                  |
+| `app/routes/todos.tsx`            | An Effect action: a recovered domain error, `useFetcher<typeof action>()`      |
+| `app/routes/todos-old.ts`         | A redirect through `Respond.redirect`                                          |
+| `app/routes/legacy.tsx`           | A plain promise loader, which the adapter passes through                       |
+| `app/routes/events.ts`            | Server-sent events from an Effect `Stream`, interrupted when the client leaves |
 
 The adapter is the boundary to React Router: everything React Router needs, the app does not write.
 The app owns the HTTP server and its middleware.

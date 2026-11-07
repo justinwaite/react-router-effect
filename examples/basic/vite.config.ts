@@ -5,8 +5,8 @@ export default defineConfig({
   // Tests and benchmarks run against the production build, so Vitest does not
   // load React Router's plugin.
   plugins: process.env.VITEST === undefined ? [reactRouter()] : [],
-  // The server build is the Effect server, which imports the React Router build.
-  environments: { ssr: { build: { rollupOptions: { input: "./server/main.ts" } } } },
+  // The server build is the app's `App`, which imports the React Router build.
+  environments: { ssr: { build: { rollupOptions: { input: "./server/app.ts" } } } },
   test: {
     include: ["test/**/*.test.ts"],
     globalSetup: ["test/global-setup.ts"],
