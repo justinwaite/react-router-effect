@@ -62,10 +62,15 @@ jobs:
       - name: Build (pack)
         run: vp pack
 
-      # The example's routes import the types React Router generates.
-      - name: Generate the example's route types
+      # The examples' routes import the types React Router generates.
+      - name: Generate the Node example's route types
         working-directory: examples/node
         run: vp exec react-router typegen
+
+      # The Cloudflare example also needs the Worker's types from Wrangler.
+      - name: Generate the Cloudflare example's Worker and route types
+        working-directory: examples/cloudflare
+        run: vp exec wrangler types && vp exec react-router typegen
 
       - name: Format, lint & type check
         run: vp check
