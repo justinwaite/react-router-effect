@@ -231,7 +231,7 @@ importers:
         version: 3.0.3
       '@effect/platform-node':
         specifier: 4.1.1
-        version: 4.1.1(effect@4.1.1)(redis@6.3.1)
+        version: 4.1.1(effect@4.1.2)(redis@6.3.1)
       '@react-router/node':
         specifier: 8.4.0
         version: 8.4.0(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@7.0.2)
@@ -254,8 +254,8 @@ importers:
         specifier: 5.0.5
         version: 5.0.5(@voidzero-dev/vite-plus-core@1.5.0(@types/node@25.9.5)(esbuild@0.28.2)(typescript@7.0.2)(yaml@2.9.0))(playwright@1.64.1)(vitest@5.0.5)
       effect:
-        specifier: 4.1.1
-        version: 4.1.1
+        specifier: 4.1.2
+        version: 4.1.2
       miniflare:
         specifier: 5.20261104.0-beta
         version: 5.20261104.0-beta(@types/node@25.9.5)
@@ -290,8 +290,8 @@ importers:
   examples/cloudflare:
     dependencies:
       effect:
-        specifier: 4.1.1
-        version: 4.1.1
+        specifier: 4.1.2
+        version: 4.1.2
       isbot:
         specifier: ^5.1.40
         version: 5.2.2
@@ -343,13 +343,13 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.1
-        version: 4.1.1(effect@4.1.1)(redis@6.3.1)
+        version: 4.1.1(effect@4.1.2)(redis@6.3.1)
       '@react-router/node':
         specifier: 8.4.0
         version: 8.4.0(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@7.0.2)
       effect:
-        specifier: 4.1.1
-        version: 4.1.1
+        specifier: 4.1.2
+        version: 4.1.2
       isbot:
         specifier: ^5.1.40
         version: 5.2.2
@@ -466,8 +466,8 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  '@babel/runtime@7.29.10':
-    resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==}
+  '@babel/runtime@7.29.13':
+    resolution: {integrity: sha512-v+oN26xP4YIlQsbQ/CbTH1WG5m/l/DjKKZNy/Kp3f/AFvbgt7Em/D0FeMM3O2hX0YzeN2M16W8lOpyhIkfCBcQ==}
     engines: {node: '>=6.9.0'}
 
   '@babel/template@7.29.7':
@@ -2086,8 +2086,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.1.1:
-    resolution: {integrity: sha512-XYu65BrcmNqu5i7PPvP4dqL+R5ma37zIsfuSPjcn78mog+6e5PkilNg7Xo+pBpjXJYlWEIpH4j91tMrfW05CMw==}
+  effect@4.1.2:
+    resolution: {integrity: sha512-d3Oah1WyKxFLFh19yWheS5IXIVaITzxZ71JkE1rkUozq/6EcJSU5nPk5bF2QrSygZ3SQoiNQB8TsxFriyMeMaQ==}
 
   electron-to-chromium@1.5.472:
     resolution: {integrity: sha512-s4+nfT29b0FKpVKoaIxl2pWsoNcn7A/nMPSrxayw4T3BsmPeV2lF9Y06BsAQeMGhCTQ4nYJ5XST7jkqe4ZEqFw==}
@@ -3049,7 +3049,7 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.11
 
-  '@babel/runtime@7.29.10': {}
+  '@babel/runtime@7.29.13': {}
 
   '@babel/template@7.29.7':
     dependencies:
@@ -3260,19 +3260,19 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@effect/platform-node-shared@4.1.1(effect@4.1.1)':
+  '@effect/platform-node-shared@4.1.1(effect@4.1.2)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.1.1
+      effect: 4.1.2
       ws: 8.22.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1)':
+  '@effect/platform-node@4.1.1(effect@4.1.2)(redis@6.3.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.1(effect@4.1.1)
-      effect: 4.1.1
+      '@effect/platform-node-shared': 4.1.1(effect@4.1.2)
+      effect: 4.1.2
       redis: 6.3.1
       undici: 8.12.3
     transitivePeerDependencies:
@@ -3752,7 +3752,7 @@ snapshots:
   '@testing-library/dom@10.4.2':
     dependencies:
       '@babel/code-frame': 7.29.7
-      '@babel/runtime': 7.29.10
+      '@babel/runtime': 7.29.13
       '@types/aria-query': 5.0.4
       aria-query: 5.3.0
       dom-accessibility-api: 0.5.16
@@ -4306,7 +4306,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.1.1: {}
+  effect@4.1.2: {}
 
   electron-to-chromium@1.5.472: {}
 
