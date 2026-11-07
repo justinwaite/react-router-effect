@@ -1,10 +1,11 @@
 import * as Http from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Context, Data, Effect, Layer, Logger, ManagedRuntime } from "effect";
+import { Context, Data, Effect, Layer, Logger, ManagedRuntime, Predicate } from "effect";
 import {
   Headers as HttpHeaders,
   HttpMiddleware,
+  HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
@@ -13,7 +14,7 @@ import { createCookie, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
-import * as ReactRouterHttp from "../src/server.ts";
+import { ReactRouter } from "../src/server.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures: a factory, services, and a server build of resource routes.
@@ -102,6 +103,9 @@ const cookieValues = async (name: string | null): Promise<ReadonlyArray<string>>
       return ["s=; Path=/; Max-Age=0", "s=new; Path=/", "other=1; Path=/"];
     case "extension":
       return ["a=1; Path=/", "b=2; Path=/; Custom=x", "c=3; Path=/; Other=y"];
+    case "invalid-name":
+      // React Router's `createCookie` writes these names; Effect's parser rejects them.
+      return ["app/session=1; Path=/", "user:prefs=dark; Path=/", "theme=dark; Path=/"];
     default:
       return [];
   }
@@ -252,10 +256,8 @@ const build: ServerBuild = {
   routeDiscovery: { mode: "initial", manifestPath: "/__manifest" },
 };
 
-const app = ReactRouterHttp.make({ build, factory: routeFactory, mode: "test" });
-
 /**
- * Applies proxy headers as an app's own middleware would, with
+ * Applies proxy headers as an app's own server middleware would, with
  * `request.modify`. The adapter builds the Web request from the result.
  */
 const proxyHeaders = HttpMiddleware.make((httpApp) =>
@@ -271,15 +273,15 @@ const proxyHeaders = HttpMiddleware.make((httpApp) =>
 );
 
 /**
- * Changes the app's response as an app's own middleware would, by the
- * `x-test-outer` header: `add-cookie` adds a cookie through Effect's cookie
- * API, `same-name` adds one with the name of a React Router cookie,
+ * Changes React Router's response as an app's own router middleware would,
+ * by the `x-test-outer` header: `add-cookie` adds a cookie through Effect's
+ * cookie API, `same-name` adds one with the name of a React Router cookie,
  * `read-cookies` lists the names of the response's cookies in a header,
  * `raw-header` sets a `set-cookie` header,
  * `replace` sends a 503 in place of React Router's response, and `fail` dies
  * after React Router answered.
  */
-const outerResponse = HttpMiddleware.make((httpApp) =>
+const OuterResponse = HttpRouter.middleware((httpApp) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const response = yield* httpApp;
@@ -304,13 +306,19 @@ const outerResponse = HttpMiddleware.make((httpApp) =>
         return response;
     }
   }),
-);
+).layer;
 
-const ServerLive = Layer.unwrap(
-  Effect.map(app, (served) =>
-    HttpServer.serve(proxyHeaders(outerResponse(served)), HttpMiddleware.compression()),
-  ),
-).pipe(Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })));
+/** React Router with the response middleware, and compression for every route. */
+const App = Layer.mergeAll(
+  ReactRouter.routes.pipe(Layer.provide(OuterResponse)),
+  HttpRouter.middleware(HttpMiddleware.compression(), { global: true }),
+).pipe(Layer.provide(ReactRouter.layer({ build, factory: routeFactory, mode: "test" })));
+
+const ServerLive = HttpRouter.serve(App, {
+  disableLogger: true,
+  disableListenLog: true,
+  middleware: proxyHeaders,
+}).pipe(Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })));
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;
 let origin = "";
@@ -319,7 +327,7 @@ beforeAll(async () => {
   runtime = ManagedRuntime.make(ServerLive);
   const server = await runtime.runPromise(HttpServer.HttpServer);
   const address = server.address;
-  if (address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+  if (Predicate.isTagged(address, "UnixPathAddress")) throw new Error("Expected a TCP address");
   origin = `http://localhost:${address.port}`;
 });
 
@@ -627,53 +635,39 @@ describe("adapter errors", () => {
     logs.push({ level: logLevel, message: Array.isArray(message) ? message : [message] });
   });
 
-  /** Starts an app made with `make`, with the capturing logger, and `HttpMiddleware.logger` when asked. */
-  const start = async (
-    make: Effect.Effect<ReactRouterHttp.App<ReactRouterHttp.Options>>,
-    withLoggerMiddleware = false,
-  ) => {
+  /**
+   * Serves React Router with `options` and the capturing logger, and with
+   * the server's request logger when asked.
+   */
+  const start = async (options: ReactRouter.Options, withRequestLogger = false) => {
     const runtime = ManagedRuntime.make(
-      Layer.unwrap(
-        Effect.map(make, (served) =>
-          withLoggerMiddleware
-            ? HttpServer.serve(served, HttpMiddleware.logger)
-            : HttpServer.serve(served),
-        ),
-      ).pipe(
+      HttpRouter.serve(ReactRouter.routes.pipe(Layer.provide(ReactRouter.layer(options))), {
+        disableLogger: !withRequestLogger,
+        disableListenLog: true,
+      }).pipe(
         Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
         Layer.provide(Logger.layer([capture])),
       ),
     );
     const server = await runtime.runPromise(HttpServer.HttpServer);
-    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    if (Predicate.isTagged(server.address, "UnixPathAddress"))
+      throw new Error("Expected a TCP address");
     return { origin: `http://localhost:${server.address.port}`, stop: () => runtime.dispose() };
   };
-
-  const throwingContext = ReactRouterHttp.make({
-    build,
-    factory: routeFactory,
-    mode: "test",
-    requestContext: () => {
-      throw new Error("request context failed");
-    },
-  });
 
   /** The error a log's message carries, if any. */
   const errorOf = (log: (typeof logs)[number]) => log.message.find((part) => part instanceof Error);
 
-  it("logs a requestContext that throws through the app's loggers, and answers 500", async () => {
-    const served = await start(throwingContext);
-    logs.length = 0;
-    const response = await fetch(`${served.origin}/promise-loader`);
-    await served.stop();
-    expect(response.status).toBe(500);
-    expect(await response.text()).toBe("");
-    expect(logs.map((log) => log.level)).toEqual(["Error"]);
-    expect(errorOf(logs[0]!)?.message).toBe("request context failed");
-  });
-
-  it("logs the error once with a logger middleware, which logs the 500 it sent", async () => {
-    const served = await start(throwingContext, true);
+  it("logs the error once with the server's request logger, which logs the 500 it sent", async () => {
+    const served = await start(
+      {
+        build,
+        factory: routeFactory,
+        mode: "test",
+        loadContext: () => Effect.die(new Error("load context failed")),
+      },
+      true,
+    );
     logs.length = 0;
     const response = await fetch(`${served.origin}/promise-loader`);
     await served.stop();
@@ -684,14 +678,27 @@ describe("adapter errors", () => {
     ]);
   });
 
+  it("logs the names of the cookies that Effect cannot send, and sends the others", async () => {
+    const served = await start({ build, factory: routeFactory, mode: "test" });
+    logs.length = 0;
+    const response = await fetch(`${served.origin}/cookies?case=invalid-name`);
+    await served.stop();
+    expect(response.headers.getSetCookie()).toEqual(["theme=dark; Path=/"]);
+    expect(logs.map((log) => [log.level, ...log.message])).toEqual([
+      [
+        "Error",
+        "React Router adapter dropped cookies that Effect cannot send",
+        ["app/session", "user:prefs"],
+      ],
+    ]);
+  });
+
   it("logs a development build that does not load, and answers 500", async () => {
-    const served = await start(
-      ReactRouterHttp.make({
-        build: () => Promise.reject(new Error("build failed")),
-        factory: routeFactory,
-        mode: "development",
-      }),
-    );
+    const served = await start({
+      build: () => Promise.reject(new Error("build failed")),
+      factory: routeFactory,
+      mode: "development",
+    });
     logs.length = 0;
     const response = await fetch(`${served.origin}/promise-loader`);
     await served.stop();

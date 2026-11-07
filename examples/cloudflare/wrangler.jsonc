@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "react-router-effect-example-cloudflare",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-01",
+  // Aborts the request's signal when the client leaves, so React Router stops
+  // streamed promises and route code sees the abort.
+  "compatibility_flags": ["enable_request_signal"],
+  // Read by route Effects through the `WorkerEnv` service of the runtime.
+  "vars": { "GREETING": "hello from the worker" },
+}

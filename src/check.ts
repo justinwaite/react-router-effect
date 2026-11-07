@@ -30,6 +30,8 @@ type FailureMessage =
  *
  * It is an inline object type, not an interface, so the compiler prints its
  * fields in the error rather than an alias name.
+ *
+ * @stability unstable
  */
 export type RouteEffectFailure<Route, Export, Unhandled, Missing, Invalid> = {
   readonly "react-router-effect": FailureMessage;
@@ -112,6 +114,8 @@ type SameType<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 /**
  * A disagreement between the `Register` of `react-router-effect` and the
  * factory, which would type plain Effect routes' data wrongly.
+ *
+ * @stability unstable
  */
 export interface RegisterMismatch<Key, Factory, Registered> {
   readonly register: Key;
@@ -140,6 +144,8 @@ type Failures<Modules, Types> =
  * The failures of every Effect route function across the route modules React
  * Router's typegen registers, and the registration mismatches, as objects.
  * `never` when everything is handled. `RouteEffectCheck` reports them.
+ *
+ * @stability unstable
  */
 export type RouteEffectFailures<Factory, Modules = RegisteredRouteModules> = Failures<
   Modules,
@@ -199,6 +205,8 @@ type FailureLines<Failure> = Failure extends {
  * factory's runtime and request context. A middleware may also fail with what
  * its `next()` fails with. The check also fails when the `Register` of
  * `react-router-effect` disagrees with the factory.
+ *
+ * @stability unstable
  */
 export type RouteEffectCheck<Factory, Modules = RegisteredRouteModules> = {
   readonly [Line in FailureLines<RouteEffectFailures<Factory, Modules>>]: Line;

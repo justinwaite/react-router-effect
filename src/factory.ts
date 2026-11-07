@@ -1,4 +1,4 @@
-import { Context, Effect, type ManagedRuntime } from "effect";
+import { Context, Effect, type ManagedRuntime, Predicate } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import {
   createContext,
@@ -244,6 +244,12 @@ const processRouteError = (
  * it in middleware and pass it to the factory's `requestContext` - the runner
  * reads it on every request and provides its services to the loader/action.
  *
+ * With the server adapter, do not set it to a new context. The adapter sets it
+ * to the request fiber's context before React Router runs, and a new context
+ * replaces those services, such as `HttpServerRequest` and the server span.
+ * Provide request services with a router middleware on `ReactRouter.routes`.
+ * The middleware below is for an app without the adapter.
+ *
  * It's just a `RouterContext`; create one with React Router's `createContext`:
  *
  * ```ts
@@ -257,7 +263,7 @@ const processRouteError = (
  *
  * export const requestContext: RequestContextKey<RequestContext> = createContext();
  *
- * // middleware:
+ * // middleware, in an app without the server adapter:
  * export const middleware: Route.MiddlewareFunction[] = [
  *   ({ context, request }, next) => {
  *     context.set(requestContext, Context.make(RequestContext, { userId: readUser(request) }));
@@ -511,11 +517,10 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
     // Defaults to an empty map when `errorHandlers` is omitted.
     const userHandlers = (config.errorHandlers ?? {}) as unknown as Record<
       string,
-      ErrorHandler<DomainError>
+      ErrorHandler<Tagged>
     >;
-
-    const isUserError = (e: unknown): e is DomainError =>
-      typeof e === "object" && e !== null && "_tag" in e && (e as Tagged)._tag in userHandlers;
+    /** The tags of the registered domain errors. */
+    const userTags = Object.keys(userHandlers);
 
     /**
      * Runs a handler's effect to completion: dispatches its whole error channel
@@ -542,9 +547,11 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
           (e): Effect.Effect<unknown, FailureResponse> => {
             // Registered domain error → remap. A library-error return is processed
             // by the internal dispatch; an `Effect` return is used as-is.
-            if (isUserError(e)) {
-              const out = userHandlers[e._tag](e);
-              return isRouteError(out) ? processRouteError(out) : out;
+            for (const tag of userTags) {
+              if (Predicate.isTagged(e, tag)) {
+                const out = userHandlers[tag](e);
+                return isRouteError(out) ? processRouteError(out) : out;
+              }
             }
             // A library route error raised directly in the handler → recover/throw.
             if (isRouteError(e)) return processRouteError(e);

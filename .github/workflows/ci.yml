@@ -62,15 +62,30 @@ jobs:
       - name: Build (pack)
         run: vp pack
 
-      # The example's routes import the types React Router generates.
-      - name: Generate the example's route types
-        working-directory: examples/basic
+      # The examples' routes import the types React Router generates.
+      - name: Generate the Node example's route types
+        working-directory: examples/node
         run: vp exec react-router typegen
+
+      # The Cloudflare example also needs the Worker's types from Wrangler.
+      - name: Generate the Cloudflare example's Worker and route types
+        working-directory: examples/cloudflare
+        run: vp exec wrangler types && vp exec react-router typegen
 
       - name: Format, lint & type check
         run: vp check
 
       - name: Test
+        run: vp test run
+
+      # Each example's tests build the app and serve it in a child process. They
+      # import the package through its built exports, from the pack step above.
+      - name: Test the Node example
+        working-directory: examples/node
+        run: vp test run
+
+      - name: Test the Cloudflare example
+        working-directory: examples/cloudflare
         run: vp test run
 
       - name: Type check the built package as a consumer
