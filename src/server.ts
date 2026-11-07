@@ -579,7 +579,14 @@ const handleRequest = (
     const { handler } = yield* loadBuild;
     const fiberContext = Context.omit(Scope.Scope)(yield* Effect.context<never>());
     const controller = new AbortController();
-    const request = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
+    const converted = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
+    // On a Web server, such as a Worker, `toWeb` returns the runtime's own
+    // Request and ignores `signal`. A copy follows both signals. A used body
+    // cannot be copied, so that request goes to React Router as it is.
+    const request =
+      converted === httpRequest.source && !converted.bodyUsed
+        ? new Request(converted, { signal: AbortSignal.any([converted.signal, controller.signal]) })
+        : converted;
     const routerContext =
       loadContext === undefined ? new RouterContextProvider() : yield* loadContext(httpRequest);
     routerContext.set(handlers.requestContext, fiberContext);

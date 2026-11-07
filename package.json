@@ -90,5 +90,8 @@
       "version": "11.9.0",
       "onFail": "warn"
     }
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

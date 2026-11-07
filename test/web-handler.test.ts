@@ -91,6 +91,26 @@ const routes = {
       );
     }),
   }),
+  stream: route("stream", "stream", {
+    loader: ({ request }: { readonly request: Request }) => {
+      const id = idOf(request);
+      request.signal.addEventListener("abort", () => aborted.add(id), { once: true });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (const letter of ["a", "b", "c", "d"]) {
+              controller.enqueue(encoder.encode(letter));
+              await sleep(60);
+            }
+            controller.close();
+          },
+        }),
+      );
+    },
+  }),
+  ignore: route("ignore", "ignore", {
+    action: () => Response.json({ saved: true }),
+  }),
   slow: route("slow", "slow", {
     loader: async ({ request }: { readonly request: Request }) => {
       const id = idOf(request);
@@ -233,6 +253,44 @@ describe("the adapter on HttpRouter.toWebHandler", () => {
     controller.abort();
     await response.catch(() => undefined);
     await vi.waitFor(() => expect(aborted.has("left")).toBe(true));
+  });
+
+  it("aborts the route's signal when the client cancels the streamed body", async () => {
+    const response = await app.handler(request("/stream?id=cancel"), executionContext);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("Expected a body");
+    await reader.read();
+    await reader.cancel();
+    await vi.waitFor(() => expect(aborted.has("cancel")).toBe(true));
+  });
+
+  it("does not abort the route's signal of a completed response", async () => {
+    const response = await app.handler(request("/stream?id=complete"), executionContext);
+    expect(await response.text()).toBe("abcd");
+    expect(aborted.has("complete")).toBe(false);
+  });
+
+  it("answers an action whose body a middleware read first", async () => {
+    const ReadBody = HttpRouter.middleware(
+      (handler) =>
+        Effect.flatMap(HttpServerRequest.HttpServerRequest, (current) =>
+          Effect.flatMap(current.text, () => handler),
+        ),
+      { global: true },
+    );
+    const reading = HttpRouter.toWebHandler(Layer.mergeAll(App, ReadBody), {
+      disableLogger: true,
+    });
+    try {
+      const response = await reading.handler(
+        request("/ignore", { method: "POST", body: "signature=1" }),
+        executionContext,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ saved: true });
+    } finally {
+      await reading.dispose();
+    }
   });
 
   it("gives React Router the runtime's own request, without the changes of middleware", async () => {
