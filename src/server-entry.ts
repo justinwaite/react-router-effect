@@ -3,6 +3,7 @@ import "./route-data.ts";
 
 export * as ReactRouterHttp from "./server.ts";
 export { ReactRouter } from "./server.ts";
+export * as ReactRouterAssets from "./assets.ts";
 export type {
   RegisterMismatch,
   RouteEffectCheck,

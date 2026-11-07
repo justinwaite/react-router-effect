@@ -9,7 +9,7 @@ import {
   type LoaderFunctionArgs,
   type ServerBuild,
 } from "react-router";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
 import { ReactRouter } from "../src/server.ts";
@@ -38,14 +38,22 @@ class Tenant extends Context.Service<Tenant, { readonly name: string }>()("test/
 /** The value that `loadContext` sets, for plain loaders to read with `context.get`. */
 const tenantKey = createContext<string>();
 
+/** The values of `x-test-scope` whose finalizers ran. */
+const closed: Array<string> = [];
+
 /**
  * Sets `tenantKey` from the `Tenant` service and the `x-tenant` header. It
- * dies when the request has an `x-test-die` header.
+ * dies when the request has an `x-test-die` header. When the request has an
+ * `x-test-scope` header, it adds a finalizer that records the header's value.
  */
 const loadContext = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.gen(function* () {
     if (request.headers["x-test-die"] !== undefined) {
       return yield* Effect.die(new Error("load context failed"));
+    }
+    const scope = request.headers["x-test-scope"];
+    if (scope !== undefined) {
+      yield* Effect.addFinalizer(() => Effect.sync(() => closed.push(scope)));
     }
     const tenant = yield* Tenant;
     const context = new RouterContextProvider();
@@ -284,6 +292,13 @@ describe("loadContext", () => {
     expect(await response.text()).toBe("");
     expect(logs.map((log) => log.level)).toEqual(["Error"]);
     expect(errorOf(logs[0]!)?.message).toBe("load context failed");
+  });
+
+  it("closes what loadContext opens when the request ends, not when the server stops", async () => {
+    closed.length = 0;
+    const response = await fetch(`${origin}/tenant`, { headers: { "x-test-scope": "s-1" } });
+    await response.text();
+    await vi.waitFor(() => expect(closed).toEqual(["s-1"]));
   });
 });
 

@@ -1,17 +1,26 @@
 import * as Http from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { HttpServer, type HttpServerRequest, type HttpServerResponse } from "effect/http";
+import { Effect, Layer, Logger, ManagedRuntime } from "effect";
+import {
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  type HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import type { ServerBuild } from "react-router";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
+import * as ReactRouterAssets from "../src/assets.ts";
 import { makeEffectRouteFactory } from "../src/index.ts";
 import * as ReactRouterHttp from "../src/server.ts";
 import * as ReactRouterVite from "../src/vite.ts";
+
+const { ReactRouter } = ReactRouterHttp;
 
 const directory = mkdtempSync(join(tmpdir(), "client-assets-"));
 mkdirSync(join(directory, "assets"));
@@ -315,5 +324,192 @@ describe("Vite dev middleware", () => {
 
   it("fails the request when Vite fails", async () => {
     expect((await fetch(`${dev.origin}/broken`)).status).toBe(500);
+  });
+});
+
+describe("ReactRouterAssets.layer", () => {
+  /** The assets manifest of a build whose hashed files are in `assets/`. */
+  const hashedAssets = { ...makeBuild().assets, url: "/assets/manifest-abc123.js" };
+
+  /** Sets a header on React Router's responses only, as a route-scoped middleware. */
+  const RouteHeader = HttpRouter.middleware((app) =>
+    Effect.map(app, HttpServerResponse.setHeader("x-route-middleware", "react-router")),
+  ).layer;
+
+  /** The messages of the app's logs. */
+  const messages: Array<unknown> = [];
+  const capture = Logger.make(({ message }) => {
+    messages.push(Array.isArray(message) ? message[0] : message);
+  });
+
+  /** The number of requests that the server's request logger logged. */
+  const requestLogs = () => messages.filter((message) => message === "Sent HTTP response").length;
+
+  /**
+   * Serves React Router and the assets layer with `options`, with the
+   * server's request logger, and starts it on a free port.
+   */
+  const startApp = async (options: ReactRouterHttp.ReactRouter.Options) => {
+    const App = Layer.mergeAll(
+      ReactRouter.routes.pipe(Layer.provide(RouteHeader)),
+      ReactRouterAssets.layer.pipe(Layer.provide(HttpRouter.disableLogger)),
+      HttpRouter.middleware(HttpMiddleware.compression({ minSize: 0 }), { global: true }),
+    ).pipe(Layer.provide(ReactRouter.layer(options)));
+    const runtime = ManagedRuntime.make(
+      HttpRouter.serve(App, { disableListenLog: true }).pipe(
+        Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
+        Layer.provide(Logger.layer([capture])),
+      ),
+    );
+    const server = await runtime.runPromise(HttpServer.HttpServer);
+    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP address");
+    const port = server.address.port;
+    return { port, origin: `http://localhost:${port}`, stop: () => runtime.dispose() };
+  };
+
+  /** Sends a GET request for `path` as it is: `fetch` resolves the dot segments of a URL first. */
+  const rawGet = (port: number, path: string) =>
+    new Promise<{ readonly status: number; readonly body: string }>((resolve, reject) => {
+      Http.get({ host: "localhost", port, path }, (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => (body += chunk));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+      }).on("error", reject);
+    });
+
+  const options = { factory: routeFactory, mode: "production" } as const;
+  let served: Awaited<ReturnType<typeof startApp>>;
+  let underPrefix: Awaited<ReturnType<typeof startApp>>;
+  let withoutHashed: Awaited<ReturnType<typeof startApp>>;
+  let development: Awaited<ReturnType<typeof startApp>>;
+
+  beforeAll(async () => {
+    served = await startApp({ ...options, build: makeBuild({ assets: hashedAssets }) });
+    underPrefix = await startApp({
+      ...options,
+      build: makeBuild({
+        publicPath: "/static/",
+        assets: { ...hashedAssets, url: "/static/assets/manifest-abc123.js" },
+      }),
+    });
+    withoutHashed = await startApp({ ...options, build: makeBuild() });
+    // The client build directory does not exist, so a read of it would fail the start.
+    development = await startApp({
+      factory: routeFactory,
+      mode: "development",
+      build: () => makeBuild({ assets: hashedAssets, assetsBuildDirectory: "missing/client" }),
+    });
+  });
+
+  afterAll(() =>
+    Promise.all([served.stop(), underPrefix.stop(), withoutHashed.stop(), development.stop()]),
+  );
+
+  it("caches a hashed file for a year as immutable, for GET and HEAD", async () => {
+    const get = await fetch(`${served.origin}/assets/entry-abc123.js`);
+    expect(get.status).toBe(200);
+    expect(get.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(await get.text()).toBe("export {};");
+    // Without compression, so that the length of the file is in the headers.
+    const head = await fetch(`${served.origin}/assets/entry-abc123.js`, {
+      method: "HEAD",
+      headers: { "accept-encoding": "identity" },
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(head.headers.get("content-length")).toBe("10");
+    expect(await head.text()).toBe("");
+  });
+
+  it("answers 404 for a file that the hashed directory does not have", async () => {
+    const response = await fetch(`${served.origin}/assets/missing.js`);
+    expect(response.status).toBe(404);
+  });
+
+  it.each(["/assets/../.vite/manifest.json", "/assets/%2e%2e/.vite/manifest.json"])(
+    "serves no file outside the hashed directory for %s",
+    async (path) => {
+      const response = await rawGet(served.port, path);
+      expect(response.status).toBe(404);
+      expect(response.body).not.toBe("{}");
+    },
+  );
+
+  it("passes a document request on to React Router", async () => {
+    const response = await fetch(`${served.origin}/some/page`);
+    expect(await response.text()).toBe("router /some/page");
+  });
+
+  it("serves the hashed directory under the build's publicPath", async () => {
+    const response = await fetch(`${underPrefix.origin}/static/assets/entry-abc123.js`);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(await response.text()).toBe("export {};");
+    expect(await (await fetch(`${underPrefix.origin}/assets/entry-abc123.js`)).text()).toBe(
+      "router /assets/entry-abc123.js",
+    );
+  });
+
+  it("registers no hashed directory for a manifest at the root of publicPath", async () => {
+    const response = await fetch(`${withoutHashed.origin}/assets/entry-abc123.js`);
+    expect(await response.text()).toBe("router /assets/entry-abc123.js");
+  });
+
+  it("registers nothing and reads nothing for a development build", async () => {
+    const response = await fetch(`${development.origin}/assets/entry-abc123.js`);
+    expect(await response.text()).toBe("router /assets/entry-abc123.js");
+  });
+
+  it("fails with a ClientBuildError when it cannot read the client build", async () => {
+    await expect(
+      startApp({
+        ...options,
+        build: makeBuild({ assets: hashedAssets, assetsBuildDirectory: "missing/client" }),
+      }),
+    ).rejects.toMatchObject({
+      _tag: "ClientBuildError",
+      directory: join(process.cwd(), "missing/client"),
+      message: `Cannot read the client build at ${join(process.cwd(), "missing/client")}`,
+    });
+  });
+
+  it("runs the middleware of React Router's routes on documents only", async () => {
+    const file = await fetch(`${served.origin}/assets/entry-abc123.js`);
+    expect(file.headers.get("x-route-middleware")).toBe(null);
+    const page = await fetch(`${served.origin}/some/page`);
+    expect(page.headers.get("x-route-middleware")).toBe("react-router");
+  });
+
+  it("logs a file that it cannot read, and answers an empty 500", async () => {
+    const locked = join(directory, "assets", "locked");
+    mkdirSync(locked);
+    writeFileSync(join(locked, "entry-def456.js"), "export {};");
+    chmodSync(locked, 0o000);
+    try {
+      messages.length = 0;
+      const response = await fetch(`${served.origin}/assets/locked/entry-def456.js`);
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("");
+      expect(messages).toContain("Cannot serve a client file");
+    } finally {
+      chmodSync(locked, 0o755);
+      rmSync(locked, { recursive: true });
+    }
+  });
+
+  it("logs no file request under HttpRouter.disableLogger", async () => {
+    messages.length = 0;
+    await (await fetch(`${served.origin}/assets/entry-abc123.js`)).text();
+    await (await fetch(`${served.origin}/some/page`)).text();
+    await vi.waitFor(() => expect(requestLogs()).toBeGreaterThan(0));
+    expect(requestLogs()).toBe(1);
+  });
+
+  it("compresses a file response with a global compression middleware", async () => {
+    const response = await fetch(`${served.origin}/assets/entry-abc123.js`, {
+      headers: { "accept-encoding": "gzip" },
+    });
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect(await response.text()).toBe("export {};");
   });
 });

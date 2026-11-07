@@ -724,11 +724,14 @@ export class ReactRouter extends Context.Service<
      * each request.
      */
     readonly build: Option.Option<ServerBuild>;
-    /** Answers the current request with React Router. */
+    /**
+     * Answers the current request with React Router. The Scope is the
+     * request's scope: the resources that `loadContext` opens close with it.
+     */
     readonly handle: Effect.Effect<
       HttpServerResponse.HttpServerResponse,
       HttpServerError.RequestError,
-      HttpServerRequest.HttpServerRequest
+      HttpServerRequest.HttpServerRequest | Scope.Scope
     >;
   }
 >()("react-router-effect/ReactRouter") {
@@ -748,13 +751,7 @@ export class ReactRouter extends Context.Service<
    * Register it at the root of the router: under a prefix, the router removes
    * the prefix from the request's URL.
    */
-  static readonly routes: Layer.Layer<
-    never,
-    never,
-    | HttpRouter.HttpRouter
-    | ReactRouter
-    | HttpRouter.Request.From<"Error", HttpServerError.RequestError>
-  > = HttpRouter.use((router) =>
+  static readonly routes = HttpRouter.use((router) =>
     Effect.flatMap(ReactRouter, ({ handle }) => router.add("*", "/*", handle)),
   );
 }
@@ -792,43 +789,40 @@ export declare namespace ReactRouter {
  * Any other build loads for each request, and gets a new React Router handler
  * when its value changes.
  */
-const makeReactRouter = <R>(
-  options: ReactRouter.Options<R>,
-): Effect.Effect<ReactRouter["Service"], never, R> =>
-  Effect.gen(function* () {
-    const mode = options.mode ?? process.env.NODE_ENV;
-    // The tracer of the layer. With the native tracer, whose spans go
-    // nowhere, React Router gets no hook, and does no work for it on a request.
-    const tracer = yield* Effect.tracer;
-    const loadBuild = makeBuildLoader(
-      options,
-      mode,
-      tracer === Tracer.nativeTracer ? [] : [routeLabel],
-    );
-    const handlers = options.factory.handlers;
-    // The request's own services, such as its scope and its span, win over
-    // the services of the layer, as `HttpApiMiddleware` merges them.
-    const services = yield* Effect.context<R>();
-    const { loadContext } = options;
-    const provided: ReactRouter.Options["loadContext"] =
-      loadContext === undefined
-        ? undefined
-        : (request) =>
-            Effect.updateContext(loadContext(request), (requestContext: Context.Context<never>) =>
-              Context.merge(services, requestContext),
-            );
-    if (typeof options.build === "function" && mode !== "production") {
-      return ReactRouter.of({
-        build: Option.none(),
-        handle: handleRequest(handlers, loadBuild, provided),
-      });
-    }
-    const loaded = yield* loadBuild;
+const makeReactRouter = Effect.fnUntraced(function* <R>(options: ReactRouter.Options<R>) {
+  const mode = options.mode ?? process.env.NODE_ENV;
+  // The tracer of the layer. With the native tracer, whose spans go
+  // nowhere, React Router gets no hook, and does no work for it on a request.
+  const tracer = yield* Effect.tracer;
+  const loadBuild = makeBuildLoader(
+    options,
+    mode,
+    tracer === Tracer.nativeTracer ? [] : [routeLabel],
+  );
+  const handlers = options.factory.handlers;
+  // The request's own services, such as its scope and its span, win over
+  // the services of the layer, as `HttpApiMiddleware` merges them.
+  const services = yield* Effect.context<R>();
+  const { loadContext } = options;
+  const provided: ReactRouter.Options["loadContext"] =
+    loadContext === undefined
+      ? undefined
+      : (request) =>
+          Effect.updateContext(loadContext(request), (requestContext: Context.Context<never>) =>
+            Context.merge(services, requestContext),
+          );
+  if (typeof options.build === "function" && mode !== "production") {
     return ReactRouter.of({
-      build: Option.some(loaded.build),
-      handle: handleRequest(handlers, Effect.succeed(loaded), provided),
+      build: Option.none(),
+      handle: handleRequest(handlers, loadBuild, provided),
     });
+  }
+  const loaded = yield* loadBuild;
+  return ReactRouter.of({
+    build: Option.some(loaded.build),
+    handle: handleRequest(handlers, Effect.succeed(loaded), provided),
   });
+});
 
 /**
  * Answers the current request with React Router. Route Effects get the
