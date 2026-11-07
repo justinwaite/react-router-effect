@@ -1,7 +1,7 @@
 # react-router-effect
 
 Serve a [React Router](https://reactrouter.com) framework-mode app from [Effect](https://effect.website)'s
-Node HTTP server, and write its loaders, actions and middleware as Effects.
+Node HTTP server or from a Cloudflare Worker, and write its loaders, actions and middleware as Effects.
 
 A route function that returns an `Effect` runs with your app's services. When it fails with a tagged
 error, the route factory you configure once decides what happens: recover with data for
@@ -19,8 +19,8 @@ export const loader = Effect.fn("loader.profile")(function* ({
 // Route.ComponentProps["loaderData"]: { profile: Profile } | { restricted: boolean }
 ```
 
-If your app does not serve React Router from an Effect HTTP server, read
-[Without the Effect HTTP server](#without-the-effect-http-server).
+To serve the app from a Worker, read [Cloudflare Workers](#cloudflare-workers). If your app serves
+React Router from another server, read [Without the Effect HTTP server](#without-the-effect-http-server).
 
 ## Install
 
@@ -29,7 +29,8 @@ vp add react-router-effect effect @effect/platform-node
 ```
 
 `effect`, `@effect/platform-node` and `react-router` are peer dependencies. The library requires
-Effect 4.1 (`effect@^4.1.0`). Only `react-router-effect/vite` imports `@effect/platform-node`.
+Effect 4.1 (`effect@^4.1.0`). Only `react-router-effect/vite` imports `@effect/platform-node`, so a
+Worker does not need it: `vp add react-router-effect effect`.
 
 ## Get started
 
@@ -308,6 +309,31 @@ A route Effect can then require the runtime's services and the request's service
 requirement is a compile error. `RequestContextKey<ReqServices>` is an alias of
 `RouterContext<Context.Context<ReqServices>>`.
 
+### Per-request resources with a layer
+
+Some request services hold a resource: a database connection, or a transaction. The adapter option
+`requestLayer` builds them as a `Layer`. The adapter builds the layer for each request, in a scope
+of its own, and closes the scope when the response ends. A streamed body keeps the scope open until
+the body ends, so a promise that streams after the shell can still use the connection.
+
+```ts
+const Database = Layer.effect(Db)(
+  Effect.acquireRelease(openConnection, (connection) => connection.close),
+);
+
+ReactRouterHttp.make({
+  build: () => import("virtual:react-router/server-build"),
+  factory: routeFactory,
+  requestLayer: () => Database,
+});
+```
+
+The layer can require the services of the factory's runtime and of the adapter. That is the
+`HttpServerRequest` on Node and `WorkerContext` on a Worker. A layer that requires another service
+is a compile error. A layer that the runtime already built is reused, and every other layer is built
+for the request only. Add the layer's services to the factory's `requestContext` key, like
+`requestContext`'s. If the layer fails to build, the adapter logs the failure and answers 500.
+
 ## The adapter
 
 `react-router-effect/server` is a React Router adapter for Effect's Node HTTP server
@@ -330,6 +356,9 @@ The options:
 - `build` is the server build, or a function that loads it.
 - `factory` is the route factory.
 - `requestContext: (request) => Context` builds the request's services before React Router runs.
+- `requestLayer: (request) => Layer` builds the request's services as a layer, in a scope that
+  closes when the response ends. Read
+  [Per-request resources with a layer](#per-request-resources-with-a-layer).
 - `clientAssets: true` serves the client build, `build.assetsBuildDirectory` under
   `build.publicPath`, before React Router. Files under `assets/` use a content hash in their name,
   and the adapter caches them for a year as immutable. It caches other files for an hour. It serves
@@ -423,6 +452,102 @@ instrumentation traces nest there too, such as a database driver that a promise 
 Without a server span, or with Effect's native tracer, whose spans go nowhere, the adapter adds no
 spans and no cost.
 
+## Cloudflare Workers
+
+`react-router-effect/worker` is a React Router adapter for a Cloudflare Worker, or another runtime
+that hands the app a Fetch API `Request` and takes back a `Response`. It imports nothing from Node.
+[`examples/cloudflare`](examples/cloudflare) is an app with these files. Its tests run it in
+workerd, both the production build and development.
+
+`ReactRouterWorker.make` returns the Worker's handler. Its `fetch` is a Worker's fetch handler.
+Like the Node adapter, it runs every loader, action and middleware through your route factory. It
+passes the Worker's request to React Router, and returns React Router's response as it is.
+
+```ts
+// workers/app.ts
+import { ReactRouterWorker } from "react-router-effect/worker";
+
+import { routeFactory } from "../app/lib/route-factory.server";
+import { DatabaseLive } from "../app/lib/services.server";
+
+export default ReactRouterWorker.make({
+  build: () => import("virtual:react-router/server-build"),
+  factory: routeFactory,
+  mode: import.meta.env.MODE,
+  requestLayer: () => DatabaseLive,
+}) satisfies ExportedHandler<Env>;
+```
+
+Build and develop it with [`@cloudflare/vite-plugin`](https://developers.cloudflare.com/workers/vite-plugin/),
+as for any React Router app on Workers. Cloudflare serves the client build from the Worker's static
+assets, so the adapter does not serve it. If the Worker does more than serve React Router, such as
+rate limiting or a `scheduled` handler, call the handler's `fetch` from your own:
+
+```ts
+const reactRouter = ReactRouterWorker.make({ build, factory: routeFactory });
+
+export default {
+  async fetch(request, env, ctx) {
+    return (await rateLimit(request, env)) ?? reactRouter.fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;
+```
+
+### The Worker's services
+
+The factory's runtime is built on the first request. It lasts as long as the Worker's isolate. A
+Worker cannot share an I/O object across requests, so the runtime holds only services without one,
+such as configuration, loggers and clients that open a connection for each call. Build a database
+connection or another I/O object in the `requestLayer`.
+
+The adapter provides `WorkerContext` to every request layer, middleware, loader and action:
+
+- `env` is the Worker's env. Register its type, such as the `Env` that `wrangler types` generates.
+- `executionContext` is the Worker's execution context.
+- `waitUntil(effect)` runs an Effect after the response, with the services of the fiber that calls
+  it. The request layer's scope stays open until the Effect ends. A failure is logged with
+  `Effect.logError`.
+
+```ts
+declare module "react-router-effect" {
+  interface Register {
+    workerEnv: Env;
+  }
+}
+
+export const requestContext: RequestContextKey<WorkerContext | Db> = createContext();
+
+export const action = Effect.fn("action.signup")(function* () {
+  const worker = yield* WorkerContext;
+  const user = yield* createUser(worker.env.SIGNUP_LIST);
+  yield* worker.waitUntil(sendWelcomeEmail(user)); // after the response, with the same Db
+  return redirect("/welcome");
+});
+```
+
+### Options
+
+- `build` is the server build, or a function that loads it.
+- `factory` is the route factory.
+- `mode` is React Router's server mode, such as `import.meta.env.MODE`. The default is
+  `process.env.NODE_ENV` where `process` exists. In production the adapter loads the build once.
+- `requestContext: (request, { env, ctx }) => Context` builds the request's services before React
+  Router runs.
+- `requestLayer: (request, { env, ctx }) => Layer` builds the request's services as a layer. Its
+  scope closes when the response body ends or the client cancels it, and after the request's
+  `waitUntil` Effects end. The Worker's `waitUntil` keeps the Worker alive until then.
+- `getLoadContext: (request, { env, ctx }) => RouterContextProvider` makes the request's router
+  context, as `getLoadContext` does for React Router's other adapters. Set the context keys that
+  promise route functions read there, so they keep working while you move the app to Effect.
+
+React Router logs and answers the errors of route code. If the adapter's own steps fail, for example
+a request layer that cannot be built, the adapter logs the error with `Effect.logError` and answers 500. A runtime that cannot be built fails every request with a 500, and the adapter logs it with
+`console.error`, since the runtime's loggers are not there.
+
+When the runtime has a tracer that exports spans, the adapter runs each request in a server span,
+named after the method, as Effect's HTTP server does. Its parent comes from the request's
+`traceparent` header. The spans of route functions nest under it, as in [Tracing](#tracing).
+
 ## Route functions
 
 ### Plain Effect loaders, actions and middleware
@@ -510,15 +635,15 @@ Type '{}' is missing the following properties from type ...:
 
 ### Requirements and limits
 
-- Effect 4.1 or later, React Router 8.3 or later for the adapter, and `skipLibCheck`. The brand
+- Effect 4.1 or later, React Router 8.3 or later for the adapters, and `skipLibCheck`. The brand
   augments `Effect`, and TypeScript cannot test the variance annotations of that augmentation.
 - A route module export must be a function. A bare `Effect` value is not a loader.
-- Prerendering (`prerender`) and RSC mode call the build without the adapter.
+- Prerendering (`prerender`) and RSC mode call the build without the adapters.
 
 ## Without the Effect HTTP server
 
 If your app serves React Router from Express, `@react-router/node`, a serverless platform or another
-server, the adapter does not apply. The same route factory still returns `makeLoader`, `makeAction`
+server, the adapters do not apply. The same route factory still returns `makeLoader`, `makeAction`
 and `makeMiddleware`. Each wraps one route function. The wrapper runs the Effect with the factory's
 runtime and error handlers, and returns a function that React Router calls.
 
@@ -641,8 +766,8 @@ export const loader = makeLoader(() =>
   helpers merged with your `respond` extensions, and the base helpers win. `makeLoader` and
   `makeAction` are the same wrapper. `makeMiddleware` wraps a `Route.MiddlewareFunction`, and
   defaults to React Router's own `MiddlewareFunction`.
-- `handlers` (`loader`, `action`, `middleware`, `requestContext`) is the runner that the server
-  adapter applies to every route module.
+- `handlers` (`loader`, `action`, `middleware`, `requestContext`, `runtime`) is the runner that the
+  adapters apply to every route module.
 - `Respond` has `early` (recover), `throw` and `redirect`, and the `respond` helpers that you add.
 - `ReturnableDataError`, `ThrowableDataError` and `ThrowableRedirectError` are the library route
   errors. `isRouteError` narrows them.
@@ -650,11 +775,13 @@ export const loader = makeLoader(() =>
 - `RequestContextKey<ReqServices>` is the type of the React Router context key for a per-request
   effect context.
 - `EffectRouteArgs<Args>`, `EffectMiddlewareArgs<Middleware>`, `RouteData<F>` and `Register` are the
-  types of plain Effect routes.
+  types of plain Effect routes. `Register`'s `workerEnv` types `WorkerContext`'s env.
 - `react-router-effect/server` exports `ReactRouterHttp.make`, and the types `RouteEffectCheck` and
   `RouteEffectFailures`.
 - `react-router-effect/vite` exports `ReactRouterVite.devMiddleware`, for development. It needs
   `@effect/platform-node`.
+- `react-router-effect/worker` exports `ReactRouterWorker.make` and `WorkerContext`, and the types
+  `RouteEffectCheck` and `RouteEffectFailures`.
 
 ## Development
 

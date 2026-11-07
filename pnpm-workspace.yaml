@@ -2,11 +2,14 @@ packages:
   - .
   - examples/*
 allowBuilds:
+  # The Cloudflare example: wrangler's bundler, and the Workers runtime's binary.
+  esbuild: true
   msgpackr-extract: false
+  workerd: true
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
   vitest: 5.0.5
-  vite-plus: ^1.4.0
+  vite-plus: ^1.5.0
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"

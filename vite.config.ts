@@ -66,6 +66,7 @@ export default defineConfig({
       index: "src/index.ts",
       server: "src/server-entry.ts",
       vite: "src/vite-entry.ts",
+      worker: "src/worker-entry.ts",
     },
     dts: {
       generator: "tsgo",

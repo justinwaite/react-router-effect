@@ -1,0 +1,8 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "react-router-effect-example-cloudflare",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-01",
+  // Read by the root loader through `WorkerContext`.
+  "vars": { "GREETING": "hello from the worker" },
+}

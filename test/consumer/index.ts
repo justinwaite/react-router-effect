@@ -11,6 +11,7 @@ import { Data, Effect } from "effect";
 import type { RouteData } from "react-router-effect";
 import type { ReactRouterHttp, RouteEffectCheck } from "react-router-effect/server";
 import type { ReactRouterVite } from "react-router-effect/vite";
+import type { ReactRouterWorker, WorkerContext } from "react-router-effect/worker";
 import type { useLoaderData } from "react-router";
 
 type LoaderData<F extends (...args: never[]) => unknown> = ReturnType<typeof useLoaderData<F>>;
@@ -45,4 +46,6 @@ export type EntryPoints = [
   RouteEffectCheck<unknown>,
   typeof ReactRouterHttp.make,
   typeof ReactRouterVite.devMiddleware,
+  typeof ReactRouterWorker.make,
+  WorkerContext,
 ];

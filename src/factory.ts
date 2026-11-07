@@ -348,17 +348,31 @@ export interface RouteHandlers {
   ) => (args: Omit<Args, "next">, next: Next) => Promise<RouteResult<Out> | undefined>;
   /** The router context key that holds the request's effect context. */
   readonly requestContext: RouterContext<Context.Context<never>>;
+  /**
+   * The factory's runtime, when it has one. An adapter builds a request layer
+   * with its services.
+   *
+   * @since 2.2.0
+   */
+  readonly runtime?: ManagedRuntime.ManagedRuntime<never, unknown> | undefined;
 }
 
 /**
  * The types a factory exposes for the server adapter's route check and for
  * `Register`. Never present at runtime.
  */
-export interface FactoryTypes<DomainError, Returns, Services, Meta> {
+export interface FactoryTypes<DomainError, Returns, Services, Meta, Runtime = unknown> {
   readonly DomainError: DomainError;
   readonly Returns: Returns;
   readonly Services: Services;
   readonly Meta: Meta;
+  /**
+   * The services of the factory's runtime alone: what a request layer may
+   * require.
+   *
+   * @since 2.2.0
+   */
+  readonly Runtime: Runtime;
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +752,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
         return runResult(fn(effectArgs, next), routeArgs) as RouteResult<ReturnType<typeof fn>>;
       },
       requestContext: storeKey as RouterContext<Context.Context<never>>,
+      runtime,
     };
 
     return {
@@ -763,7 +778,8 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
         DomainError,
         Returns,
         RServices | ReqServices,
-        Meta
+        Meta,
+        RServices
       >,
     };
   };

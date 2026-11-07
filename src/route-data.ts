@@ -30,6 +30,8 @@ import type { ReturnableDataError } from "./errors.ts";
  *     recover: { FormValidationError: { reply: SubmissionResponse } };
  *     // What `actionMeta` returns.
  *     actionMeta: { realtimeEventIds: ReadonlyArray<string> };
+ *     // The Worker's env, which `WorkerContext` gives (`react-router-effect/worker`).
+ *     workerEnv: Env;
  *   }
  * }
  * ```
