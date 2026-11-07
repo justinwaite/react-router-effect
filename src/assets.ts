@@ -5,7 +5,7 @@
  *
  * @since 3.0.0
  */
-import { Array as Arr, Effect, FileSystem, type Layer, Option, Path } from "effect";
+import { Array as Arr, Data, Effect, FileSystem, type Layer, Option, Path } from "effect";
 import {
   type HttpPlatform,
   HttpRouter,
@@ -14,9 +14,22 @@ import {
 } from "effect/http";
 import type { ServerBuild } from "react-router";
 
-import { ClientBuildError, ReactRouter } from "./server.ts";
+import { ReactRouter } from "./server.ts";
 
-export { ClientBuildError };
+/**
+ * The layer cannot serve the client build: it cannot read the directory, or
+ * a file name has a `*`, which the router cannot match. The build's
+ * `assetsBuildDirectory` is relative to the working directory of the server,
+ * so `directory` is the path that it resolved to.
+ *
+ * @since 3.0.0
+ */
+export class ClientBuildError extends Data.TaggedError("ClientBuildError")<{
+  readonly message: string;
+  /** The resolved directory of the client build. */
+  readonly directory: string;
+  readonly cause: unknown;
+}> {}
 
 /** The `Cache-Control` of the files in the hashed directory, whose names include a content hash. */
 const hashedCacheControl = "public, max-age=31536000, immutable";

@@ -6,7 +6,7 @@
  * serves the client: route modules, `/@vite/client`, the files of `public/`,
  * and its error overlay. A custom server runs Vite in middleware mode and passes
  * it each request first. Vite's middleware is a Connect stack of Node
- * requests and responses, so this middleware needs Effect's Node HTTP server.
+ * requests and responses, so this layer needs Effect's Node HTTP server.
  *
  * @since 2.1.0
  */
@@ -61,41 +61,6 @@ const passThroughVite = (
       settle(Effect.die(error));
     }
   });
-
-/**
- * Passes each request to Vite first, and the requests Vite passes on to the
- * app. Use it in development only, with Vite in middleware mode:
- *
- * ```ts
- * import { ReactRouterVite } from "react-router-effect/vite";
- *
- * const vite = await createServer({ server: { middlewareMode: true } });
- * HttpServer.serve(Effect.flatten(reactRouterApp).pipe(ReactRouterVite.devMiddleware(vite)));
- * ```
- *
- * A request Vite answers gets an empty `HttpServerResponse`, which Effect's
- * Node server does not write, since Vite has ended the Node response. A Vite
- * error fails the request as a defect.
- */
-export const devMiddleware =
-  (vite: ViteDevServer) =>
-  <E, R>(
-    app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-  ): Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    E,
-    R | HttpServerRequest.HttpServerRequest
-  > =>
-    HttpServerRequest.HttpServerRequest.use((request) =>
-      passThroughVite(
-        vite,
-        // Vite takes HTTP/1 requests; Effect's Node server serves HTTP/1.
-        NodeHttpServerRequest.toIncomingMessage(request) as Http.IncomingMessage,
-        NodeHttpServerRequest.toServerResponse(request) as Http.ServerResponse,
-      ).pipe(
-        Effect.flatMap((passed) => (passed ? app : Effect.succeed(HttpServerResponse.empty()))),
-      ),
-    );
 
 /**
  * Serves the app in development, as the Express template does. Give it to

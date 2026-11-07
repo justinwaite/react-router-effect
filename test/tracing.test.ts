@@ -7,9 +7,7 @@ import { RouterContextProvider, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { makeEffectRouteFactory, type EffectMiddlewareArgs } from "../src/index.ts";
-import * as ReactRouterHttp from "../src/server.ts";
-
-const { ReactRouter } = ReactRouterHttp;
+import { ReactRouter } from "../src/server.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures: a tracer that records its spans, and a build with nested middleware.
@@ -134,14 +132,16 @@ const buildOf = (routes: Record<string, FixtureRoute>): ServerBuild => ({
 
 const build = buildOf(routes);
 
-const app = ReactRouterHttp.make({ build, factory: routeFactory, mode: "test" });
+const App = ReactRouter.routes.pipe(
+  Layer.provide(ReactRouter.layer({ build, factory: routeFactory, mode: "test" })),
+);
 
 let runtime: ManagedRuntime.ManagedRuntime<HttpServer.HttpServer, unknown>;
 let origin = "";
 
 beforeAll(async () => {
   runtime = ManagedRuntime.make(
-    Layer.unwrap(Effect.map(app, (served) => HttpServer.serve(served))).pipe(
+    HttpRouter.serve(App, { disableLogger: true, disableListenLog: true }).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => Http.createServer(), { port: 0 })),
       Layer.provide(Layer.succeed(Tracer.Tracer)(recordingTracer)),
       // Records the `set-cookie` response header on the server span, which is opt-in.

@@ -9,7 +9,7 @@
  */
 import { Data, Effect } from "effect";
 import type { RouteData } from "react-router-effect";
-import type { ReactRouterHttp, RouteEffectCheck } from "react-router-effect/server";
+import type { ReactRouter, ReactRouterAssets, RouteEffectCheck } from "react-router-effect/server";
 import type { ReactRouterVite } from "react-router-effect/vite";
 import type { useLoaderData } from "react-router";
 
@@ -43,6 +43,7 @@ export const yielded: Effect.Effect<never, Other> = new Other();
 // Loads the declarations of every entry point.
 export type EntryPoints = [
   RouteEffectCheck<unknown>,
-  typeof ReactRouterHttp.make,
-  typeof ReactRouterVite.devMiddleware,
+  typeof ReactRouter.layer,
+  typeof ReactRouterAssets.layer,
+  typeof ReactRouterVite.layer,
 ];
