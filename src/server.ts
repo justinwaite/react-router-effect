@@ -38,6 +38,7 @@ import {
 } from "effect";
 import {
   Cookies,
+  HttpMethod,
   HttpRouter,
   HttpServerError,
   HttpServerRequest,
@@ -417,6 +418,14 @@ const callRouter = (
 // ---------------------------------------------------------------------------
 
 /**
+ * The methods of React Router's routes. Not the method `*`, which also
+ * registers HEAD: the router answers HEAD with the GET route of a path only
+ * when no HEAD route matches it, so a HEAD route on `*` takes HEAD from every
+ * GET route of the app.
+ */
+const routeMethods = Arr.filter(HttpMethod.all, (method) => method !== "HEAD");
+
+/**
  * React Router, as a service of the Effect HTTP app. `ReactRouter.layer`
  * provides it, and `ReactRouter.routes` registers it on the app's router as
  * the catch-all route.
@@ -463,16 +472,19 @@ export class ReactRouter extends Context.Service<
     Layer.effect(ReactRouter, makeReactRouter(options));
 
   /**
-   * Registers React Router as the catch-all route of the app's router, for
-   * every method on `*`. A route that the app registers itself wins over it,
-   * also a route on `/`, such as the prerendered home page of
-   * `ReactRouterAssets.layer`. Register it at the root of the router: under a
-   * prefix, the router removes the prefix from the request's URL.
+   * Registers React Router as the catch-all route of the app's router, on
+   * `*`, for every method of `HttpMethod.all` but HEAD. A route that the app
+   * registers itself wins over it, also a route on `/`, such as the
+   * prerendered home page of `ReactRouterAssets.layer`. A HEAD request uses
+   * the GET route of its path, React Router's or the app's own, as Express
+   * does. A method outside `HttpMethod.all` gets the router's 404. Register
+   * it at the root of the router: under a prefix, the router removes the
+   * prefix from the request's URL.
    */
   static readonly routes = HttpRouter.use((router) =>
-    // Not `/*`: the router also registers `/*` as an exact route on `/`,
-    // which ties with a route on `/` of another layer.
-    Effect.flatMap(ReactRouter, ({ handle }) => router.add("*", "*", handle)),
+    Effect.flatMap(ReactRouter, ({ handle }) =>
+      router.addAll(routeMethods.map((method) => HttpRouter.route(method, "*", handle))),
+    ),
   );
 }
 

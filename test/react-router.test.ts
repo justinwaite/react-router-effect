@@ -131,6 +131,10 @@ const routes = {
     default: () => null,
     action: Effect.fn("pageAction")(() => Effect.succeed({ saved: true })),
   }),
+  method: route("method", "method", {
+    loader: ({ request }: { readonly request: Request }) =>
+      new Response("method", { headers: { "x-method": request.method } }),
+  }),
 };
 
 /** An entry route of the assets manifest. */
@@ -276,6 +280,26 @@ describe("ReactRouter.routes", () => {
   it("serves a route of the app in place of the catch-all", async () => {
     const response = await fetch(`${origin}/health`);
     expect(await response.text()).toBe("ok");
+  });
+
+  it("answers HEAD with the GET route of the app, as Express does", async () => {
+    const response = await fetch(`${origin}/health`, { method: "HEAD" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe("2");
+    expect(await response.text()).toBe("");
+  });
+
+  it("gives React Router a HEAD request as HEAD, and sends no body", async () => {
+    const response = await fetch(`${origin}/method`, { method: "HEAD" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-method")).toBe("HEAD");
+    expect(await response.text()).toBe("");
+  });
+
+  it("answers a method outside HttpMethod.all with the router's 404", async () => {
+    const response = await fetch(`${origin}/method`, { method: "PROPFIND" });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-method")).toBe(null);
   });
 });
 
