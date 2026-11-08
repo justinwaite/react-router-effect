@@ -27,12 +27,16 @@ export type WithRouteMeta<T, Meta> = [Meta] extends [never]
     ? DataWithResponseInit<RecordWithMeta<Body, Meta>>
     : RecordWithMeta<T, Meta>;
 
-// React Router exports the type of the `data(...)` wrapper, but not its class.
-const DataWithResponseInitClass = data(undefined).constructor;
-
-/** True for a `data(...)` wrapper, never for a business field that looks like one. */
+/**
+ * True for a `data(...)` wrapper, by the same test React Router applies. A
+ * class test fails when the app and the adapter load different copies of
+ * React Router, as under the Vite dev server.
+ */
 const isDataWithResponseInit = (value: unknown): value is DataWithResponseInit<unknown> =>
-  value instanceof DataWithResponseInitClass;
+  Predicate.hasProperty(value, "type") &&
+  Predicate.hasProperty(value, "data") &&
+  Predicate.hasProperty(value, "init") &&
+  value.type === "DataWithResponseInit";
 
 /** True for a plain object, which can be copied without losing behavior. */
 const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
