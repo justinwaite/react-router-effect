@@ -113,7 +113,7 @@ provides makes no server span, so the adapter adds no spans.
 
 The baselines serve the same build with React Router's own request handler. Their route functions
 run through the same route factory, so the Effect runtime, the request's services, the error
-handlers and the action metadata cost the same on both sides. Each server runs in its own process,
+handlers and the route metadata cost the same on both sides. Each server runs in its own process,
 and none logs, compresses or traces.
 
 - `bench/handler.bench.ts`: one request at a time, in one process: `@react-router/node` against the

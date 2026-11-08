@@ -130,7 +130,7 @@ type RegisterMismatches<Returns, Meta> =
       : RegisterMismatch<"recover", FactoryRecover<Returns>, RegisteredRecover>)
   | (SameType<Meta, RegisteredMeta> extends true
       ? never
-      : RegisterMismatch<"actionMeta", Meta, RegisteredMeta>);
+      : RegisterMismatch<"routeMeta", Meta, RegisteredMeta>);
 
 /** Every failure: the routes', then the registration's. */
 type Failures<Modules, Types> =

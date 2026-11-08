@@ -2,11 +2,11 @@ import { Predicate } from "effect";
 import { data, type UNSAFE_DataWithResponseInit as DataWithResponseInit } from "react-router";
 
 // ---------------------------------------------------------------------------
-// Action metadata: request-scoped facts attached to every action's data.
+// Route metadata: request-scoped facts attached to every loader and action's data.
 // ---------------------------------------------------------------------------
 
-/** The key that holds the metadata in action data. */
-export const actionMetaKey = "__meta";
+/** The key that holds the metadata in loader and action data. */
+export const routeMetaKey = "__meta";
 
 /**
  * Adds optional metadata to a record. Only records get metadata, because a
@@ -14,16 +14,14 @@ export const actionMetaKey = "__meta";
  * values (strings, arrays, `Response`s) have nowhere to put it.
  */
 type RecordWithMeta<T, Meta> =
-  T extends Record<string, unknown>
-    ? Omit<T, typeof actionMetaKey> & { [actionMetaKey]?: Meta }
-    : T;
+  T extends Record<string, unknown> ? Omit<T, typeof routeMetaKey> & { [routeMetaKey]?: Meta } : T;
 
 /**
- * The type of action data after metadata is attached. A `data(...)` wrapper
+ * The type of loader or action data after metadata is attached. A `data(...)` wrapper
  * gets metadata on its body. With no configured metadata (`Meta` is `never`)
  * the data is unchanged.
  */
-export type WithActionMeta<T, Meta> = [Meta] extends [never]
+export type WithRouteMeta<T, Meta> = [Meta] extends [never]
   ? T
   : T extends DataWithResponseInit<infer Body>
     ? DataWithResponseInit<RecordWithMeta<Body, Meta>>
@@ -48,15 +46,15 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
 };
 
 /**
- * Attaches `meta` to the action result. A plain record gets a copy with the
+ * Attaches `meta` to a loader or action result. A plain record gets a copy with the
  * metadata key; a `data(...)` wrapper gets it on its body and keeps its init.
  * Any other value is returned unchanged.
  */
-export const attachActionMeta = <T>(value: T, meta: unknown): T => {
+export const attachRouteMeta = <T>(value: T, meta: unknown): T => {
   if (isDataWithResponseInit(value)) {
     if (!isPlainRecord(value.data)) return value;
     // The copy has the same shape as `value` plus the metadata key.
-    return data({ ...value.data, [actionMetaKey]: meta }, value.init ?? undefined) as T;
+    return data({ ...value.data, [routeMetaKey]: meta }, value.init ?? undefined) as T;
   }
-  return isPlainRecord(value) ? ({ ...value, [actionMetaKey]: meta } as T) : value;
+  return isPlainRecord(value) ? ({ ...value, [routeMetaKey]: meta } as T) : value;
 };

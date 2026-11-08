@@ -35,7 +35,7 @@ const routeFactory = makeEffectRouteFactory<FormError | UnhandledError>()((Respo
   errorHandlers: {
     FormError: (error) => Respond.early({ reply: error.reply }, 422),
   },
-  actionMeta: () => ({ requestId: "request-1" }),
+  routeMeta: () => ({ requestId: "request-1" }),
 }));
 const { Respond } = routeFactory;
 const store = routeFactory.handlers.requestContext;
@@ -356,7 +356,7 @@ describe("route functions", () => {
   it("recovers a domain error through the factory's handler", async () => {
     const response = await fetch(`${origin}/recovered`);
     expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ reply: "invalid" });
+    expect(await response.json()).toEqual({ reply: "invalid", __meta: { requestId: "request-1" } });
   });
 
   it("turns an unhandled domain error into a 500", async () => {
@@ -423,7 +423,9 @@ describe("single fetch", () => {
     expect(body).toContain("streamed later");
   });
 
-  it("attaches the action metadata to Effect and plain actions", async () => {
+  it("attaches the route metadata to Effect loaders and to Effect and plain actions", async () => {
+    const effectLoader = await fetch(`${origin}/page.data`);
+    expect(await effectLoader.text()).toContain("request-1");
     const effectAction = await fetch(`${origin}/page.data`, {
       method: "POST",
       headers: { origin },

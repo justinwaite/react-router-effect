@@ -24,7 +24,7 @@ class Unprovided extends Context.Service<Unprovided, { readonly x: 1 }>()("test/
 declare module "../src/route-data.ts" {
   interface Register {
     recover: { FormError: { reply: string } };
-    actionMeta: { readonly requestId: string };
+    routeMeta: { readonly requestId: string };
   }
 }
 
@@ -42,7 +42,7 @@ declare const runtime: import("effect").ManagedRuntime.ManagedRuntime<Database, 
 const routeFactory = makeEffectRouteFactory<FormError>()((Respond) => ({
   runtime,
   errorHandlers: { FormError: (error) => Respond.early({ reply: error.reply }) },
-  actionMeta: () => ({ requestId: "r" }),
+  routeMeta: () => ({ requestId: "r" }),
 }));
 
 const zeroArg = Effect.fn("zeroArg")(function* () {
@@ -109,6 +109,15 @@ describe("route data of plain Effect loaders", () => {
   it("leaves non-Effect functions to React Router", () => {
     const plain = (args: LoaderArgs) => Promise.resolve({ plain: args.params.id });
     expectTypeOf<RouteData<typeof plain>>().toEqualTypeOf<typeof plain>();
+  });
+
+  it("types the route metadata on makeLoader and makeAction wrappers", () => {
+    // The factory infers its metadata type from `routeMeta`, without `readonly`.
+    type Data = { id: string } & { __meta?: { requestId: string } };
+    const loader = routeFactory.makeLoader(withArgs);
+    const action = routeFactory.makeAction(withArgs);
+    expectTypeOf<Awaited<ReturnType<typeof loader>>>().toEqualTypeOf<Data>();
+    expectTypeOf<Awaited<ReturnType<typeof action>>>().toEqualTypeOf<Data>();
   });
 });
 
@@ -208,14 +217,14 @@ describe("RouteEffectCheck", () => {
     const other = makeEffectRouteFactory<FormError>()((Respond) => ({
       runtime,
       errorHandlers: { FormError: () => Respond.early({ different: true }) },
-      actionMeta: () => ({ requestId: "r" }),
+      routeMeta: () => ({ requestId: "r" }),
     }));
     type Failures = RouteEffectFailures<typeof other, {}>;
     expectTypeOf<Extract<Failures, { register: "recover" }>>().not.toBeNever();
     expectTypeOf<Extract<Failures, { register: "recover" }>["registered"]>().toEqualTypeOf<{
       FormError: { reply: string };
     }>();
-    expectTypeOf<Extract<Failures, { register: "actionMeta" }>>().toBeNever();
+    expectTypeOf<Extract<Failures, { register: "routeMeta" }>>().toBeNever();
   });
 });
 

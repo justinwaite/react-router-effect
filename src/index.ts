@@ -1,5 +1,5 @@
-export { actionMetaKey } from "./action-meta.ts";
-export type { WithActionMeta } from "./action-meta.ts";
+export { routeMetaKey } from "./route-meta.ts";
+export type { WithRouteMeta } from "./route-meta.ts";
 export {
   isRouteError,
   ReturnableDataError,
@@ -9,7 +9,7 @@ export {
 export type { AnyRouteError } from "./errors.ts";
 export { makeEffectRouteFactory } from "./factory.ts";
 export type {
-  ActionMetaArgs,
+  RouteMetaArgs,
   EffectMiddlewareArgs,
   EffectNext,
   ErrorHandler,
