@@ -13,7 +13,7 @@ import {
   type RouterContextProvider,
 } from "react-router";
 
-import { attachActionMeta, type WithActionMeta } from "./action-meta.ts";
+import { attachRouteMeta, type WithRouteMeta } from "./route-meta.ts";
 import {
   deferFailureResponse,
   deferRouteError,
@@ -323,8 +323,8 @@ export type RequestContextKey<ReqServices> = RouterContext<Context.Context<ReqSe
  */
 const defaultRequestContext: RequestContextKey<never> = createContext(Context.empty());
 
-/** What `actionMeta` reads: the request and the router context of the action. */
-export interface ActionMetaArgs {
+/** What `routeMeta` reads: the request and the router context of the loader or action. */
+export interface RouteMetaArgs {
   readonly request: Request;
   readonly context: Readonly<RouterContextProvider>;
 }
@@ -537,13 +537,14 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
        */
       respond?: ExtraRespond;
       /**
-       * Request-scoped metadata to attach to every action's data under `__meta`,
-       * read after the action resolves. The server adapter attaches it to every
-       * action it runs, including plain functions and `makeAction` wrappers. A
-       * thrown result gets none. Only plain records and `data(...)` bodies include
-       * it; other values are returned unchanged.
+       * Request-scoped metadata to attach to the data of every loader and action
+       * under `__meta`, read after the function resolves. The server adapter
+       * attaches it to every loader and action it runs, including plain functions
+       * and `makeLoader` / `makeAction` wrappers. A thrown result gets none. Only
+       * plain records and `data(...)` bodies include it; other values are returned
+       * unchanged.
        */
-      actionMeta?: (args: ActionMetaArgs) => Meta;
+      routeMeta?: (args: RouteMetaArgs) => Meta;
     },
   ) {
     const config = builder(baseRespond);
@@ -648,15 +649,18 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       fn: (
         args: Args,
       ) => Effect.Effect<A, E, R> & Diagnose<E, R, DomainError, RServices | ReqServices>,
-    ): (args: Args) => Promise<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>> {
+    ): (
+      args: Args,
+    ) => Promise<WithRouteMeta<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>, Meta>> {
       // The diagnostic is irrelevant inside the body (it's `unknown` for any valid
       // call); treat `fn` as the plain effect-returning function it is.
       const run = fn as unknown as (
         args: Args,
       ) => Effect.Effect<unknown, E, RServices | ReqServices>;
+      // The server adapter's `handlers` attach the metadata to what this resolves with.
       return (args: Args) =>
         runProgram(run(args), args.context, args.request.signal) as Promise<
-          A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>
+          WithRouteMeta<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>, Meta>
         >;
     }
 
@@ -835,7 +839,13 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       >;
     }
 
-    const actionMeta = config.actionMeta;
+    const routeMeta = config.routeMeta;
+
+    /** Runs a loader or action's result and attaches the route metadata to its data. */
+    async function withRouteMeta(result: unknown, args: RouteArgs): Promise<unknown> {
+      const resolved = await runResult(result, args);
+      return routeMeta === undefined ? resolved : attachRouteMeta(resolved, routeMeta(args));
+    }
 
     // React Router calls every route function with args that include at least
     // `request` and `context`, so each wrapper reads them through `RouteArgs`.
@@ -843,13 +853,9 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
     // or recovered data, or the awaited plain result. `RouteResult` is its type.
     const handlers: RouteHandlers = {
       loader: (fn) => async (args) =>
-        runResult(fn(args), args) as RouteResult<ReturnType<typeof fn>>,
-      action: (fn) => async (args) => {
-        const result = await runResult(fn(args), args);
-        return (
-          actionMeta === undefined ? result : attachActionMeta(result, actionMeta(args))
-        ) as RouteResult<ReturnType<typeof fn>>;
-      },
+        (await withRouteMeta(fn(args), args)) as RouteResult<ReturnType<typeof fn>>,
+      action: (fn) => async (args) =>
+        (await withRouteMeta(fn(args), args)) as RouteResult<ReturnType<typeof fn>>,
       middleware: (fn) => async (args, next) => {
         const routeArgs: RouteArgs = args;
         // The runner supplies `next` as an effect in place of the one `Args`
@@ -865,18 +871,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
 
     return {
       makeLoader: makeLoaderOrAction,
-      makeAction: makeLoaderOrAction as <
-        Args extends LoaderFunctionArgs | ActionFunctionArgs,
-        A,
-        E,
-        R,
-      >(
-        fn: (
-          args: Args,
-        ) => Effect.Effect<A, E, R> & Diagnose<E, R, DomainError, RServices | ReqServices>,
-      ) => (
-        args: Args,
-      ) => Promise<WithActionMeta<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>, Meta>>,
+      makeAction: makeLoaderOrAction,
       makeMiddleware,
       Respond,
       defer,

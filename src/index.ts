@@ -1,7 +1,7 @@
-export { actionMetaKey } from "./action-meta.ts";
+export { routeMetaKey } from "./route-meta.ts";
+export type { WithRouteMeta } from "./route-meta.ts";
 export { deferredFailureMessage } from "./defer.ts";
 export type { DeferDiagnose, DeferredPromise } from "./defer.ts";
-export type { WithActionMeta } from "./action-meta.ts";
 export {
   isRouteError,
   ReturnableDataError,
@@ -11,9 +11,9 @@ export {
 export type { AnyRouteError } from "./errors.ts";
 export { makeEffectRouteFactory } from "./factory.ts";
 export type {
-  ActionMetaArgs,
   DeferHandled,
   DeferRecoverOf,
+  RouteMetaArgs,
   EffectMiddlewareArgs,
   EffectNext,
   ErrorHandler,
