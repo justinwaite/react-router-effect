@@ -16,7 +16,17 @@
 import type * as Http from "node:http";
 
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
-import { Effect, Exit, Layer, Option, Predicate, Scope, SynchronizedRef, Tuple } from "effect";
+import {
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Scope,
+  SynchronizedRef,
+  Tuple,
+} from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 /**
@@ -104,14 +114,23 @@ export const layer = <E, R>(
       const layerScope = yield* Effect.scope;
       const services =
         yield* Effect.context<Exclude<HttpRouter.Request.Without<R>, HttpRouter.HttpRouter>>();
-      /** Builds `app` in `scope`. The services of this layer do not replace either. */
+      /** Replaces the services of an effect's fiber with those of this layer. */
+      const onlyLayerServices: (current: Context.Context<never>) => typeof services = () =>
+        services;
+      /**
+       * Builds `app` in `scope` with the services of this layer only. A build
+       * runs in the request that finds a new `App`, and an `App` can keep the
+       * services of its build for every request, as `HttpApiBuilder.group`
+       * does, so the build must not see that request's services.
+       */
       const build = (app: Layer.Layer<never, E, R>, scope: Scope.Scope) =>
         HttpRouter.toHttpEffect(app).pipe(
           Scope.provide(scope),
           // A new memo map, so the App gets its own router. The memo map of the
           // server's layers has the server's router, and a fork of it reuses it.
           Effect.provideServiceEffect(Layer.CurrentMemoMap, Layer.makeMemoMap),
-          Effect.provideContext(services),
+          // Not `provideContext`, which adds to the request's services.
+          Effect.updateContext(onlyLayerServices),
         );
       type Handler = Effect.Success<ReturnType<typeof build>>;
       interface Built {
