@@ -55,9 +55,11 @@ export const startServer = async (
   child.stderr?.on("data", (chunk) => (output += chunk));
   const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
   const origin = `http://localhost:${port}`;
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 20_000;
   for (;;) {
-    const up = await fetch(`${origin}/events/status`).then(
+    // The server listens before it attaches its request handler. A poll in that
+    // gap is accepted and never answered, so a poll that takes over a second counts as "not up yet".
+    const up = await fetch(`${origin}/events/status`, { signal: AbortSignal.timeout(1000) }).then(
       (response) => response.ok,
       () => false,
     );
