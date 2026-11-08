@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Effect, Layer, Logger, ManagedRuntime, Predicate } from "effect";
-import { HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { Effect, Layer, Logger, ManagedRuntime, Option, Predicate } from "effect";
+import {
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import type { ServerBuild } from "react-router";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
@@ -621,6 +627,29 @@ describe("ReactRouterVite.layer", () => {
     );
     expect(responses).toEqual(["v3", "v3", "v3", "v3", "v3"]);
     expect(builds - before).toBe(1);
+  });
+
+  it("builds an App without the services of the request that starts the build", async () => {
+    // An App can keep the services of its build for every request, as
+    // `HttpApiBuilder.group` does, so the first request must not leak into it.
+    current = Layer.mergeAll(
+      appVersion("v5"),
+      Layer.unwrap(
+        Effect.serviceOption(HttpServerRequest.HttpServerRequest).pipe(
+          Effect.map((request) =>
+            HttpRouter.add(
+              "GET",
+              "/build-request",
+              HttpServerResponse.text(
+                Option.match(request, { onNone: () => "none", onSome: ({ url }) => url }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(await (await fetch(`${dev.origin}/version?first`)).text()).toBe("v5");
+    expect(await (await fetch(`${dev.origin}/build-request`)).text()).toBe("none");
   });
 
   it("closes the current App when the server stops", async () => {
