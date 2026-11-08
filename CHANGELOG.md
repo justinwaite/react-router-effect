@@ -1,5 +1,11 @@
 # react-router-effect
 
+## 2.3.1
+
+### Patch Changes
+
+- [#84](https://github.com/justinwaite/react-router-effect/pull/84) [`1b8809c`](https://github.com/justinwaite/react-router-effect/commit/1b8809ccb24d2c373888e91869bcc8c7385e2856) Thanks [@justinwaite](https://github.com/justinwaite)! - `ReactRouterVite.layer` builds a new `App` without the services of the request that starts the build. Before, an `App` that keeps its build's services, such as an `HttpApiBuilder` group, saw that first request's `HttpServerRequest` on every later request after an edit.
+
 ## 2.3.0
 
 ### Minor Changes
