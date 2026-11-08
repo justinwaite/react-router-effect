@@ -4,6 +4,11 @@ import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. That code gives the route its success type, which the tests depend on, so
+// `missingReturnYieldStar` is turned off on those lines instead of `return yield*`.
+
 // ---------------------------------------------------------------------------
 // A runtime provides services to loader/action effects: an effect may require
 // the runtime's services (no `Effect.provide`), but requiring a service the
@@ -11,13 +16,13 @@ import { makeEffectRouteFactory } from "../src/index.ts";
 // ---------------------------------------------------------------------------
 
 class InRuntime extends Context.Service<InRuntime>()("test/InRuntime", {
-  make: Effect.succeed({ ping: (): Effect.Effect<string> => Effect.succeed("pong") }),
+  make: Effect.succeed({ ping: Effect.succeed("pong") }),
 }) {
   static readonly layer = Layer.effect(this, this.make);
 }
 
 class NotInRuntime extends Context.Service<NotInRuntime>()("test/NotInRuntime", {
-  make: Effect.succeed({ pong: (): Effect.Effect<number> => Effect.succeed(1) }),
+  make: Effect.succeed({ pong: Effect.succeed(1) }),
 }) {
   static readonly layer = Layer.effect(this, this.make);
 }
@@ -31,7 +36,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         const svc = yield* InRuntime;
-        return yield* svc.ping();
+        return yield* svc.ping;
       }),
     );
     // Resolved value flows through unchanged (no errors, no recovers).
@@ -42,7 +47,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         const svc = yield* InRuntime;
-        return yield* svc.ping();
+        return yield* svc.ping;
       }),
     );
     expectTypeOf(action).returns.resolves.toEqualTypeOf<string>();
@@ -54,7 +59,7 @@ describe("a configured runtime satisfies an effect's required services", () => {
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         const svc = yield* NotInRuntime;
-        return yield* svc.pong();
+        return yield* svc.pong;
       }),
     );
   });
@@ -63,7 +68,8 @@ describe("a configured runtime satisfies an effect's required services", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         const svc = yield* InRuntime;
-        yield* svc.ping();
+        yield* svc.ping;
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ recovered: true });
         return 42;
       }),
@@ -84,7 +90,7 @@ describe("without a runtime, effects must require nothing", () => {
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         const svc = yield* InRuntime;
-        return yield* svc.ping();
+        return yield* svc.ping;
       }),
     );
   });
@@ -114,6 +120,7 @@ describe("errorHandlers is optional", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
         // No handler registered, but it's a declared domain error → flows to 500.
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new SomeDomainError({ m: "boom" });
         return true;
       }),

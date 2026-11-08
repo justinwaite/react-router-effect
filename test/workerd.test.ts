@@ -58,9 +58,9 @@ const get = (path: string, init?: Parameters<Miniflare["dispatchFetch"]>[1]) =>
 
 /** What the Worker's isolate saw, from `/stats`. */
 const Stats = Schema.Struct({
-  opened: Schema.Number,
-  closed: Schema.Number,
-  background: Schema.Number,
+  opened: Schema.Finite,
+  closed: Schema.Finite,
+  background: Schema.Finite,
   aborted: Schema.Array(Schema.String),
 });
 

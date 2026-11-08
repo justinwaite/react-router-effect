@@ -60,6 +60,8 @@ describe("factory handler validation", () => {
     makeEffectRouteFactory<DomainErrors>()(() => ({
       errorHandlers: {
         // @ts-expect-error - Effect.fail("boom") rejects with a string, not a Response/Data.
+        // The test asserts this error, so the Effect diagnostic for it is expected.
+        // @effect-diagnostics-next-line missingEffectError:off
         BadInputError: (_error: BadInputError) => Effect.fail("boom"),
       },
     }));

@@ -35,6 +35,7 @@ export const noData: [LoaderData<typeof responseLoader>] extends [never] ? true 
 declare const narrow: Effect.Effect<{ a: 1 }, Other>;
 export const wide: Effect.Effect<{ a: number } | string, Other | Error> = narrow;
 // @ts-expect-error a wider success is not assignable to a narrower one
+// oxlint-disable-next-line effecttsgo/missing-effect-error -- the error is the assertion, as for @ts-expect-error
 export const back: Effect.Effect<{ a: 1 }, Other> = wide;
 
 // A yieldable error is still an `Effect`.

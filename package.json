@@ -44,7 +44,7 @@
     "test:unit": "vp test run --project unit",
     "test:browser": "vp test run --project browser",
     "test:browser:install": "vp exec playwright install chromium",
-    "check": "vp check",
+    "check": "effect-tsgo vp check",
     "check:consumer": "tsc -p test/consumer",
     "changeset": "changeset",
     "changeset:version": "changeset version",

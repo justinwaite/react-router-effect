@@ -14,7 +14,7 @@ export const meta: Route.MetaFunction = () => [{ title: "react-router-effect exa
  */
 export const loader = Effect.fn("loader.home")(function* () {
   const todos = yield* (yield* Todos).list;
-  const summary = Effect.runPromise(
+  const summary = Effect.runPromiseWith(yield* Effect.context())(
     Effect.sleep("300 millis").pipe(Effect.as(`${todos.length} todos, summarized slowly`)),
   );
   return { count: todos.length, summary };

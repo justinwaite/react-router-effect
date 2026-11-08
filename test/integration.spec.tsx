@@ -20,6 +20,13 @@ import { describe, expect, it } from "vitest";
 import { makeEffectRouteFactory } from "../src/index.ts";
 import { renderRoute } from "./app/render-route.tsx";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. With `return yield*` instead, most of these generators would have one
+// statement, and `unnecessaryEffectGen` would then ask for each fixture to be
+// rewritten without a generator. So `missingReturnYieldStar` is turned off on
+// those lines.
+
 // ---------------------------------------------------------------------------
 // A consumer-style setup: domain errors + a configured factory.
 // ---------------------------------------------------------------------------
@@ -87,6 +94,7 @@ describe("makeLoader — through a real router", () => {
   it("recovers a directly-raised Respond.early into loaderData", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ recovered: true });
         return { unreached: true };
       }),
@@ -99,6 +107,7 @@ describe("makeLoader — through a real router", () => {
   it("sends a directly-raised Respond.throw to the error boundary", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.throw({ denied: true }, 403);
         return { unreached: true };
       }),
@@ -112,6 +121,7 @@ describe("makeLoader — through a real router", () => {
   it("follows a directly-raised Respond.redirect", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/dest");
         return { unreached: true };
       }),
@@ -126,6 +136,7 @@ describe("makeLoader — through a real router", () => {
   it("recovers a registered handler's Respond.early into loaderData", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "from handler" });
         return { unreached: true };
       }),
@@ -140,6 +151,7 @@ describe("makeLoader — through a real router", () => {
   it("throws a registered handler's Effect.fail(Response) to the boundary", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new BadInputError({ message: "bad input" });
         return { unreached: true };
       }),
@@ -153,6 +165,7 @@ describe("makeLoader — through a real router", () => {
   it("auto-renders an unregistered HttpServerRespondable error", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return { unreached: true };
       }),
@@ -168,6 +181,7 @@ describe("makeLoader — through a real router", () => {
   it("falls through to a 500 for a declared domain error with no handler", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new UnhandledDomainError();
         return { unreached: true };
       }),
@@ -196,6 +210,7 @@ describe("makeAction — through a real router", () => {
   it("recovers a handler's Respond.early into actionData after submit", async () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "server says hi" });
         return { unreached: true };
       }),
@@ -212,6 +227,7 @@ describe("makeAction — through a real router", () => {
   it("sends a thrown action error to the boundary", async () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new BadInputError({ message: "invalid form" });
         return { unreached: true };
       }),

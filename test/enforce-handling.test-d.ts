@@ -5,6 +5,11 @@ import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. That code gives the route its success type, which the tests depend on, so
+// `missingReturnYieldStar` is turned off on those lines instead of `return yield*`.
+
 // ---------------------------------------------------------------------------
 // The factory's contract: app-wide *declared domain errors* may be left to the
 // library (handled, or fall through to the 500 / auto-respond default), but any
@@ -40,6 +45,7 @@ describe("declared domain errors need no handling in the loader/action", () => {
   it("a registered domain error type-checks", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new MyDomainError({ message: "boom" });
         return true;
       }),
@@ -50,6 +56,7 @@ describe("declared domain errors need no handling in the loader/action", () => {
   it("a declared domain error with no handler type-checks (it flows to the 500)", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new DbError({ query: "select 1" });
         return true;
       }),
@@ -60,6 +67,7 @@ describe("declared domain errors need no handling in the loader/action", () => {
   it("a respondable domain error with no handler type-checks", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return true;
       }),
@@ -70,6 +78,7 @@ describe("declared domain errors need no handling in the loader/action", () => {
   it("library route errors raised directly need no handling", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login");
         return true;
       }),
@@ -84,6 +93,7 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
     // route error, or respondable, so makeLoader requires it to be handled first.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }),
@@ -94,6 +104,7 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
     // @ts-expect-error - FooServiceError must be handled before makeAction accepts it.
     makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }),
@@ -104,7 +115,9 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
     // @ts-expect-error - DbError is fine, but FooServiceError still must be handled.
     makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new DbError({ query: "select 1" });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }),
@@ -114,6 +127,7 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
   it("handling the service error by recovering makes it type-check", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }).pipe(Effect.catchTag("FooServiceError", () => Effect.succeed(false))),
@@ -124,6 +138,7 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
   it("handling it by mapping to a library route error makes it type-check", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }).pipe(
@@ -138,6 +153,7 @@ describe("non-domain errors MUST be handled in the loader/action", () => {
   it("handling it by mapping to a declared domain error makes it type-check", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return true;
       }).pipe(
@@ -157,7 +173,10 @@ describe("an `any` error/requirement doesn't trigger a confusing diagnostic", ()
     // here so tsc's own error at the actual mistake isn't buried under ours.
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // oxlint-disable effecttsgo/any-unknown-in-error-context -- the `any` error channel is what this test checks
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Effect.fail(1 as any);
+        // oxlint-enable effecttsgo/any-unknown-in-error-context
         return true;
       }),
     );
@@ -167,6 +186,7 @@ describe("an `any` error/requirement doesn't trigger a confusing diagnostic", ()
   it("an `any` requirement channel type-checks instead of reporting missingRequirements: any", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- the `any` requirement is what this test checks
         yield* Effect.succeed(1) as Effect.Effect<number, never, any>;
         return true;
       }),
@@ -181,8 +201,11 @@ describe("an `any` error/requirement doesn't trigger a confusing diagnostic", ()
     // "unhandledErrors: any" diagnostic on top of this one.
     const undefinedVarLoader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // oxlint-disable effecttsgo/any-unknown-in-error-context -- the undefined name makes the error channel `any`, which is what this test checks
         // @ts-expect-error - `somethingUndefined` doesn't exist.
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Effect.fail(somethingUndefined);
+        // oxlint-enable effecttsgo/any-unknown-in-error-context
         return true;
       }),
     );

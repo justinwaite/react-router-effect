@@ -5,6 +5,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. With `return yield*` instead, most of these generators would have one
+// statement, and `unnecessaryEffectGen` would then ask for each fixture to be
+// rewritten without a generator. So `missingReturnYieldStar` is turned off on
+// those lines.
+
 // ---------------------------------------------------------------------------
 // Fixtures.
 // ---------------------------------------------------------------------------
@@ -107,6 +114,7 @@ describe("makeLoader — success & direct route errors", () => {
   it("recovers a directly-raised Respond.early with data(...)", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ message: "missing foo" });
         return true;
       }),
@@ -122,6 +130,7 @@ describe("makeLoader — success & direct route errors", () => {
   it("threads init through Respond.early", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ ok: false }, 200);
         return true;
       }),
@@ -133,6 +142,7 @@ describe("makeLoader — success & direct route errors", () => {
   it("throws a directly-raised Respond.throw as a DataWithResponseInit", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.throw({ boom: true }, 500);
         return true;
       }),
@@ -145,6 +155,7 @@ describe("makeLoader — success & direct route errors", () => {
   it("throws a directly-raised Respond.redirect as a redirect Response", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login", 302);
         return true;
       }),
@@ -162,6 +173,7 @@ describe("makeLoader — registered handlers", () => {
   it("throws when a handler returns Effect.fail(Response)", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new BadInputError({ message: "nope" });
         return true;
       }),
@@ -177,6 +189,7 @@ describe("makeLoader — registered handlers", () => {
   it("recovers when a handler returns Respond.early", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "invalid" });
         return true;
       }),
@@ -191,6 +204,7 @@ describe("makeLoader — registered handlers", () => {
   it("recovers with the value when a handler returns Effect.succeed", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new RecoverableError({ fallback: 7 });
         return true;
       }),
@@ -201,6 +215,7 @@ describe("makeLoader — registered handlers", () => {
   it("throws when a handler returns Respond.throw", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new GoAwayError();
         return true;
       }),
@@ -216,6 +231,7 @@ describe("makeLoader — registered handlers", () => {
   it("throws a redirect when a handler returns Respond.redirect", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new RedirectingError({ to: "/elsewhere" });
         return true;
       }),
@@ -232,6 +248,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
   it("falls through to a 500 for a declared domain error with no handler", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new UnhandledDomainError();
         return true;
       }),
@@ -247,6 +264,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
     const ownFactory = makeEffectRouteFactory()(() => ({ errorHandlers: {} }));
     const loader = ownFactory.makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return true;
       }),
@@ -262,6 +280,7 @@ describe("makeLoader — unhandled & respondable errors", () => {
   it("prefers a registered handler over a respondable error's own response", async () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return true;
       }),
@@ -284,6 +303,7 @@ describe("makeAction", () => {
   it("recovers an action handler's Respond.early", async () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "bad form" });
         return true;
       }),
@@ -317,6 +337,7 @@ describe("makeMiddleware", () => {
     }));
     const middleware = factory.makeMiddleware((_args, _next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "blocked" });
         return "unreachable" as const;
       }),
@@ -332,6 +353,7 @@ describe("makeMiddleware", () => {
     const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
     const middleware = factory.makeMiddleware((_args, _next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login", 302);
         return "unreachable" as const;
       }),
@@ -355,6 +377,7 @@ describe("makeMiddleware", () => {
     }));
     const middleware = factory.makeMiddleware<MiddlewareFunction<Response>>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "blocked" });
         return yield* next();
       }),
@@ -368,11 +391,7 @@ describe("makeMiddleware", () => {
 
   it("surfaces a downstream next() rejection as a typed FailureResponse", async () => {
     const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
-    const middleware = factory.makeMiddleware((_args, next) =>
-      Effect.gen(function* () {
-        return yield* next();
-      }),
-    );
+    const middleware = factory.makeMiddleware((_args, next) => next());
     const downstreamRedirect = new Response(null, {
       status: 302,
       headers: { location: "/elsewhere" },

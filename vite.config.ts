@@ -1,10 +1,11 @@
+import { strict } from "@effect/tsgo/oxlint-presets";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   staged: {
-    "*": "vp check --fix",
+    "*": "vp run check --fix",
   },
   test: {
     projects: [
@@ -73,6 +74,11 @@ export default defineConfig({
     exports: true,
   },
   lint: {
+    // The Effect rules run through `effect-tsgo vp check`. `strict` makes every one an error.
+    extends: [strict],
+    // The rule takes no options, so it cannot allow this library's unstable APIs
+    // the way `allowedUnstableApis` does in tsconfig.json.
+    rules: { "effecttsgo/unstable-api-usage": "off" },
     options: {
       typeAware: true,
       typeCheck: true,
