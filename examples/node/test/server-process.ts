@@ -57,8 +57,9 @@ export const startServer = async (
   const origin = `http://localhost:${port}`;
   const deadline = Date.now() + 20_000;
   for (;;) {
-    // The server listens before it attaches its request handler. A poll in that
-    // gap is accepted and never answered, so a poll that takes over a second counts as "not up yet".
+    // The server listens before it attaches its request handler, and answers 503
+    // in that gap, which counts as "not up yet". A poll that takes over a second
+    // counts the same, in case a server leaves a request unanswered.
     const up = await fetch(`${origin}/events/status`, { signal: AbortSignal.timeout(1000) }).then(
       (response) => response.ok,
       () => false,
