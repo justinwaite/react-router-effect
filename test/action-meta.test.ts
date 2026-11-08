@@ -94,14 +94,30 @@ it("does not consume raw Response bodies, directly or inside data", async () => 
   expect(await response.text()).toBe('{"untouched":true}');
 });
 
-it("does not mistake a business record with data and init fields for a data wrapper", () => {
+it("treats a record with the data wrapper shape as a wrapper, as React Router does", () => {
   const body = {
     type: "DataWithResponseInit",
     data: { value: 1 },
     init: null,
     approvedIds: ["record-one"],
   };
-  expect(attachActionMeta(body, meta)).toEqual({ ...body, __meta: meta });
+  // React Router sends only `data`, so the metadata goes there.
+  expect(attachActionMeta(body, meta)).toEqual(data({ value: 1, __meta: meta }));
+});
+
+it("attaches metadata to a data wrapper from another copy of React Router", () => {
+  // The Vite dev server can load a second copy, with its own wrapper class.
+  class ForeignDataWithResponseInit {
+    readonly type = "DataWithResponseInit";
+    constructor(
+      readonly data: unknown,
+      readonly init: ResponseInit | null,
+    ) {}
+  }
+  const init = { status: 201 };
+  const result = attachActionMeta(new ForeignDataWithResponseInit({ approved: true }, init), meta);
+  expect(result.data).toEqual({ approved: true, __meta: meta });
+  expect(result.init).toBe(init);
 });
 
 it("types metadata as optional on records and data bodies only", () => {
