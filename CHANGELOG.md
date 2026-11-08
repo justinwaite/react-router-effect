@@ -1,5 +1,29 @@
 # react-router-effect
 
+## 2.3.0
+
+### Minor Changes
+
+- [#83](https://github.com/justinwaite/react-router-effect/pull/83) [`6120aae`](https://github.com/justinwaite/react-router-effect/commit/6120aae85ee9ed472d5e1398ba7168470e974083) Thanks [@Mando75](https://github.com/Mando75)! - The route factory now returns `defer`, which is unstable. It starts an Effect without waiting for it, and gives a promise of the result for loader data. React Router streams the promise to `<Await>`. The deferred work gets the services and the span of the loader, and keeps running after the loader returns. An aborted request or a failed loader stops it.
+  
+  The deferred Effect can fail only with the factory's domain errors, `Respond.early` and `Respond.throw`. The error handlers turn a failure into the promise's value or an `ErrorResponse` for `useAsyncError`. Any other failure rejects the promise with an error that has no server details, and the server logs the cause. An error that the factory does not handle does not compile. Fixes [#77](https://github.com/justinwaite/react-router-effect/issues/77).
+
+- [#82](https://github.com/justinwaite/react-router-effect/pull/82) [`75aa17a`](https://github.com/justinwaite/react-router-effect/commit/75aa17a6c26c9381aaee6650fa46b6022d219dd7) Thanks [@Mando75](https://github.com/Mando75)! - The route factory now attaches its request metadata to the data of every loader, as it does for every action. The types of plain Effect loaders already included the optional `__meta` key, but the key was never there at runtime. Fixes [#78](https://github.com/justinwaite/react-router-effect/issues/78).
+  
+  The metadata API has new names, because it is no longer only for actions:
+  
+  - The factory configuration `actionMeta` is now `routeMeta`.
+  - The `Register` key `actionMeta` is now `routeMeta`.
+  - `ActionMetaArgs` is now `RouteMetaArgs`, `WithActionMeta` is now `WithRouteMeta`, and `actionMetaKey` is now `routeMetaKey`.
+  
+  The `makeLoader` wrapper now types its data with the metadata, as `makeAction` does. To migrate, rename `actionMeta` to `routeMeta` in the factory configuration and in `Register`.
+  
+  The route metadata API is unstable, and a minor version can change it. The rest of the route factory stays stable.
+
+### Patch Changes
+
+- [#80](https://github.com/justinwaite/react-router-effect/pull/80) [`27f7fd5`](https://github.com/justinwaite/react-router-effect/commit/27f7fd58c9b7c4302613038862c49d305f0d9c04) Thanks [@Mando75](https://github.com/Mando75)! - Under the Vite dev server, the adapter now attaches `actionMeta` to a `data(...)` that the app builds. The app and the adapter can load different copies of React Router there. The adapter now finds a `data(...)` wrapper by its shape, as React Router does, and not by its class. A record with the fields `type: "DataWithResponseInit"`, `data` and `init` now gets the metadata on `data`, because React Router sends only that field. Fixes [#79](https://github.com/justinwaite/react-router-effect/issues/79).
+
 ## 2.2.0
 
 ### Minor Changes
