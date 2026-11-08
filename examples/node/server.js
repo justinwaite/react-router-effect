@@ -10,6 +10,28 @@ import { HttpMiddleware, HttpRouter } from "effect/http";
 
 const port = Number(process.env.PORT ?? "3000");
 
+/**
+ * Creates the HTTP server, which answers 503 until Effect attaches its request
+ * handler. Effect opens the port before it builds the app and attaches the
+ * handler, and Node never answers a request that has no handler.
+ */
+function createStartingServer() {
+  const server = createServer();
+  const answerStarting = (_request, response) => {
+    response.writeHead(503, { connection: "close", "retry-after": "1" });
+    response.end();
+  };
+  server.on("request", answerStarting);
+  // Node emits `newListener` before it adds the listener, so the two never
+  // answer the same request.
+  server.on("newListener", function detachStarting(event) {
+    if (event !== "request") return;
+    server.off("request", answerStarting);
+    server.off("newListener", detachStarting);
+  });
+  return server;
+}
+
 const App =
   process.env.NODE_ENV === "development"
     ? await (async () => {
@@ -30,7 +52,7 @@ NodeRuntime.runMain(
     // `HttpRouter.middleware(HttpMiddleware.compression(), { global: true })`.
     // It is here only so that the benchmarks serve `App` without compression.
     HttpRouter.serve(App, { middleware: HttpMiddleware.compression() }).pipe(
-      Layer.provide(NodeHttpServer.layer(() => createServer(), { port })),
+      Layer.provide(NodeHttpServer.layer(createStartingServer, { port })),
     ),
   ),
 );

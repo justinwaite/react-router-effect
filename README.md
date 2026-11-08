@@ -259,6 +259,79 @@ service-specific error that is not a declared domain error. Catch it or map it. 
 defaults for declared errors. The errors of one feature or service need explicit handling.
 [The route check](#the-route-check) reports an unhandled error at compile time.
 
+## Defer data
+
+The route factory returns `defer`. It starts an Effect without waiting for it, and gives a promise
+of the result. Put the promise in the loader data. React Router streams it to `<Await>` after the
+first response. `defer` is unstable: a minor version can change it.
+
+```tsx
+// app/lib/route-factory.server.ts
+export const { Respond, defer } = routeFactory;
+
+// app/routes/product.tsx
+export const loader = Effect.fn("loader.product")(function* ({
+  params,
+}: EffectRouteArgs<Route.LoaderArgs>) {
+  const product = yield* (yield* Products).get(params.id);
+  return {
+    product,
+    reviews: yield* defer((yield* Reviews).list(params.id)),
+    stats: yield* (yield* Stats).load(params.id).pipe(
+      Effect.catchTag("StatsUnavailable", () => Effect.succeed(null)),
+      defer,
+    ),
+  };
+});
+
+export default function Product({ loaderData }: Route.ComponentProps) {
+  return (
+    <Suspense fallback={<p>Loading reviews</p>}>
+      <Await resolve={loaderData.reviews} errorElement={<ReviewsError />}>
+        {(reviews) => <ReviewList reviews={reviews} />}
+      </Await>
+    </Suspense>
+  );
+}
+```
+
+The loader yields `defer`, and the deferred work starts at that point. The work and the rest of the
+loader run at the same time. The work gets the services and the span of the loader, so its spans are in the trace of the request. It
+keeps running after the loader returns. The work stops in two cases:
+
+- The request aborts, for example because the client disconnects.
+- The loader fails after it deferred the work. The response then has no data that waits for it.
+
+A client-side navigation to another page does not abort the request. React Router aborts the request
+of a navigation only while its loaders run. The work then runs until it ends, or until React
+Router's `streamTimeout` ends the stream.
+
+The response starts before the deferred work fails, so a failure cannot redirect or change the
+response. The error handlers of the factory turn a failure into a value or a rejection:
+
+| Failure of the deferred Effect                                  | The promise                                       |
+| --------------------------------------------------------------- | ------------------------------------------------- |
+| A handler recovers it, with `Respond.early` or `Effect.succeed` | resolves with the value → `<Await>`               |
+| `Respond.early(value)` raised directly                          | resolves with `value` → `<Await>`                 |
+| A handler throws it, with `Respond.throw` or `Effect.fail`      | rejects with an `ErrorResponse` → `useAsyncError` |
+| `Respond.throw(value, init)` raised directly                    | rejects with an `ErrorResponse` → `useAsyncError` |
+| A handler redirects, or a domain error has no handler           | rejects with a plain `Error`                      |
+| A defect or an interrupt                                        | rejects with a plain `Error`                      |
+
+The plain `Error` has the message `deferredFailureMessage` (`"Deferred route data failed"`) and no
+stack, in every server mode. The server logs the full cause of a defect. A recovered
+`Respond.early(value, init)` gives `value` without `init`, because a promise has no response.
+
+The deferred Effect can fail only with the factory's domain errors, `Respond.early` and
+`Respond.throw`. Any other error does not compile, and the message names the error tags. Handle
+those errors before `defer`, or make them defects with `Effect.orDie`. In a factory without domain
+errors, the deferred Effect must fail with `never`.
+
+The promise type includes what the handlers recover, so `Route.ComponentProps` types the value that
+`<Await>` renders. The type is `DeferredPromise<A>`, a subtype of `Promise<A>`. The
+`promiseInEffectSuccess` rule of the Effect language service reports only the global `Promise`
+type, so it does not report a `yield* defer(...)`.
+
 ## Provide services
 
 ### App-wide services with a runtime
@@ -630,10 +703,10 @@ export const middleware = [
   `Route.ComponentProps` types the data of an Effect loader or action, including what the factory
   recovers.
   - Hooks that take `typeof loader` or `typeof action`, such as `useFetcher<typeof action>()`,
-    read the data through React Router's `SerializeFrom`. It treats a function as a client
-    function when its argument has the members of client loader args, and gives client functions
-    their raw return value. Typegen's `Route.LoaderArgs` and `Route.ActionArgs` have those same
-    members, so for an Effect the hook would type the data as the Effect itself.
+    read the data through React Router's `SerializeFrom`. If the argument of a function has the
+    members of client loader args, `SerializeFrom` treats it as a client function. It gives a
+    client function its raw return value. Typegen's `Route.LoaderArgs` and `Route.ActionArgs` have
+    those same members, so for an Effect the hook types the data as the Effect itself.
   - Take the args through `EffectRouteArgs<Route.LoaderArgs>`. It makes `pattern` optional, so the
     argument no longer matches and the hook reads the brand. A loader without args needs nothing.
   - `RouteData<typeof loader>` reads the brand directly and applies React Router's serialization.
@@ -814,7 +887,7 @@ export const loader = makeLoader(() =>
 ## API
 
 - `makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond?, routeMeta? }))`
-  returns `{ makeLoader, makeAction, makeMiddleware, Respond, handlers }`. The config is a builder
+  returns `{ makeLoader, makeAction, makeMiddleware, Respond, defer, handlers }`. The config is a builder
   that receives the base `Respond`. All its fields are optional. The returned `Respond` is the base
   helpers merged with your `respond` extensions, and the base helpers win. `makeLoader` and
   `makeAction` are the same wrapper. `makeMiddleware` wraps a `Route.MiddlewareFunction`, and
@@ -822,6 +895,9 @@ export const loader = makeLoader(() =>
 - `handlers` (`loader`, `action`, `middleware`, `requestContext`) is the runner that the server
   adapter applies to every route module.
 - `Respond` has `early` (recover), `throw` and `redirect`, and the `respond` helpers that you add.
+- `defer` (unstable) starts an Effect and gives a `DeferredPromise` of its result for loader data.
+  Read [Defer data](#defer-data). The types `DeferredPromise`, `DeferDiagnose`, `DeferHandled` and
+  `DeferRecoverOf`, and the constant `deferredFailureMessage`, go with it.
 - `ReturnableDataError`, `ThrowableDataError` and `ThrowableRedirectError` are the library route
   errors. `isRouteError` narrows them.
 - `ErrorHandler<Err>` is the handler signature type.
