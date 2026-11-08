@@ -153,7 +153,7 @@ describe("the serialization brand", () => {
 
 const handled = Effect.fn("handled")(function* () {
   yield* Database;
-  if (Math.random() > 2) yield* new FormError({ reply: "x" });
+  if (Math.random() > 2) return yield* new FormError({ reply: "x" });
   return { ok: true };
 });
 const unhandled = Effect.fn("unhandled")(function* () {

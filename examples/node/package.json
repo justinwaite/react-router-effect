@@ -14,9 +14,9 @@
     "bench:body": "node bench/request-body.ts"
   },
   "dependencies": {
-    "@effect/platform-node": "4.1.1",
+    "@effect/platform-node": "4.1.2",
     "@react-router/node": "8.4.0",
-    "effect": "4.1.1",
+    "effect": "4.1.2",
     "isbot": "^5.1.40",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

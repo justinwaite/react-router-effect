@@ -267,21 +267,25 @@ const traced =
         },
       },
       (span) =>
-        Effect.sync(() => {
+        Effect.promise(() => {
           args.context.set(storeKey, Context.add(store, Tracer.ParentSpan, span));
           const settled = settle(() => fn(args, ...rest));
           if (operation !== "middleware") args.context.set(storeKey, store);
           return settled;
         }).pipe(
           Effect.withParentSpan(span),
-          Effect.flatMap((settled) => Effect.promise(() => settled)),
+          // `Effect.filterOrFail` passes its failure callback the whole `Settled`
+          // union, so `result.error` would need a branch that never runs.
+          // @effect-diagnostics-next-line flatMapConditionalToFilterOrFail:off
           Effect.flatMap((result) =>
             result.ok || !isSpanError(result.error)
               ? Effect.succeed(result)
-              : Effect.fail(result.error),
+              : // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- a route function can throw any value, and React Router types it `unknown`
+                Effect.fail(result.error),
           ),
         ),
     );
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- the error is that thrown value, rethrown below
     return Effect.runPromiseExitWith(store)(program).then((exit) => {
       if (operation === "middleware") args.context.set(storeKey, store);
       if (Exit.isFailure(exit)) throw Cause.squash(exit.cause);
@@ -614,6 +618,10 @@ const handleRequest = (
     // `loadContext` runs first: a copy of the request below takes its body.
     const routerContext =
       loadContext === undefined ? new RouterContextProvider() : yield* loadContext(httpRequest);
+    // `Effect.abortSignal` needs a `Scope`, which `fiberContext` omits, and it aborts
+    // when that scope closes, even for a response that completed. The adapter aborts
+    // this controller itself, on interrupt and when the body stream ends early.
+    // @effect-diagnostics-next-line abortControllerInEffect:off
     const controller = new AbortController();
     const converted = yield* HttpServerRequest.toWeb(httpRequest, { signal: controller.signal });
     // On a Web server, such as a Worker, `toWeb` returns the runtime's own

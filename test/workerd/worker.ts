@@ -87,6 +87,9 @@ const routes = {
           }),
         ),
       );
+      // `waitUntil` takes a Promise that outlives the request, which the test
+      // checks, so the work runs detached from the loader's fiber.
+      // @effect-diagnostics-next-line runEffectInsideEffect:off
       context.waitUntil(Effect.runPromise(work));
       return Response.json({ scheduled: true });
     }),

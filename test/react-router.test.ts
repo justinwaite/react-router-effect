@@ -366,12 +366,7 @@ describe("ReactRouter.layer", () => {
       factory: routeFactory,
       mode: "production",
     });
-    const reader = () =>
-      Layer.effectDiscard(
-        Effect.gen(function* () {
-          yield* ReactRouter;
-        }),
-      );
+    const reader = () => Layer.effectDiscard(ReactRouter);
     await Effect.runPromise(
       Effect.provide(
         Effect.void,

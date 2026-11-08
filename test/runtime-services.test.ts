@@ -4,6 +4,13 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. With `return yield*` instead, most of these generators would have one
+// statement, and `unnecessaryEffectGen` would then ask for each fixture to be
+// rewritten without a generator. So `missingReturnYieldStar` is turned off on
+// those lines.
+
 // ---------------------------------------------------------------------------
 // A small app runtime: a `Database` and a `Greeter` that depends on it. The
 // factory is given this runtime so loader/action effects can require these
@@ -106,6 +113,7 @@ describe("makeLoader / makeAction with a runtime", () => {
       Effect.gen(function* () {
         const greeter = yield* Greeter;
         yield* greeter.greet("ignored");
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ message: "short-circuit" });
         return "unreachable";
       }),
@@ -144,6 +152,7 @@ describe("runtime + registered domain-error handlers compose", () => {
       Effect.gen(function* () {
         const greeter = yield* Greeter;
         yield* greeter.greet("x");
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new GreetError({ reason: "nope" });
         return "unreachable";
       }),
@@ -174,6 +183,7 @@ describe("errorHandlers is optional", () => {
       // to a library route error (throw) keeps it type-correct and exercises the
       // missing-handlers runtime path.
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new SomeError();
         return true;
       }).pipe(Effect.catchTag("SomeError", () => Effect.fail(Respond.throw({ boom: true }, 500)))),

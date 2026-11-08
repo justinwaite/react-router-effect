@@ -10,6 +10,11 @@ import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. That code gives the route its success type, which the tests depend on, so
+// `missingReturnYieldStar` is turned off on those lines instead of `return yield*`.
+
 // ---------------------------------------------------------------------------
 // What a *component* actually reads. `useLoaderData<typeof loader>()` returns
 // `SerializeFrom<typeof loader>`, which strips `DataWithResponseInit<U>` down to
@@ -73,6 +78,7 @@ describe("loaderData — success & direct route errors", () => {
   it("a directly-raised Respond.early surfaces as its unwrapped body", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ message: "missing foo" });
         return true;
       }),
@@ -88,6 +94,7 @@ describe("loaderData — success & direct route errors", () => {
   it("a directly-raised Respond.throw does NOT appear in loaderData", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.throw({ boom: true });
         return true;
       }),
@@ -98,6 +105,7 @@ describe("loaderData — success & direct route errors", () => {
   it("a directly-raised Respond.redirect does NOT appear in loaderData", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login");
         return true;
       }),
@@ -108,7 +116,9 @@ describe("loaderData — success & direct route errors", () => {
   it("multiple directly-raised Respond.early bodies union in loaderData", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ a: 1 });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ b: 2 });
         return true;
       }),
@@ -123,6 +133,7 @@ describe("loaderData — registered handlers", () => {
   it("a handler returning Respond.early recovers as its unwrapped body", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "invalid" });
         return true;
       }),
@@ -133,6 +144,7 @@ describe("loaderData — registered handlers", () => {
   it("a handler returning Effect.succeed recovers as the success value", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new RecoverableError({ fallback: 7 });
         return true;
       }),
@@ -143,6 +155,7 @@ describe("loaderData — registered handlers", () => {
   it("a handler returning Effect.fail (throw) does NOT appear in loaderData", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new BadInputError({ message: "nope" });
         return true;
       }),
@@ -153,6 +166,7 @@ describe("loaderData — registered handlers", () => {
   it("a handler returning Respond.throw does NOT appear in loaderData", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new GoAwayError();
         return true;
       }),
@@ -165,6 +179,7 @@ describe("loaderData — registered handlers", () => {
     // FormError - so RecoverableError's `{ recovered: number }` must NOT appear.
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "invalid" });
         return true;
       }),
@@ -180,8 +195,11 @@ describe("loaderData — combinations & aliases", () => {
   it("combines direct recover, handler recover, and a literal success", () => {
     const loader = makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ direct: true });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "invalid" });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new RecoverableError({ fallback: 1 });
         return 1 as const;
       }),
@@ -194,6 +212,7 @@ describe("loaderData — combinations & aliases", () => {
   it("an unhandled respondable error is thrown, never recovered (no widening)", () => {
     const loader = empty.makeLoader((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return true;
       }),
@@ -216,6 +235,7 @@ describe("actionData", () => {
   it("recovers a handler's Respond.early as its unwrapped body", () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FormError({ reply: "invalid" });
         return true;
       }),
@@ -228,6 +248,7 @@ describe("actionData", () => {
   it("does not surface thrown handler outcomes", () => {
     const action = makeAction((_a: LoaderFunctionArgs) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new BadInputError({ message: "nope" });
         return true;
       }),

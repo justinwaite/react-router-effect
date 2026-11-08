@@ -22,6 +22,7 @@ const App =
       })()
     : (await import("./build/server/index.js")).App;
 
+// oxlint-disable effecttsgo/missing-effect-context -- `App` is `any`: this JS file loads it at run time, through `ssrLoadModule` or the build
 NodeRuntime.runMain(
   Layer.launch(
     // The app's own server middleware: compression that flushes streamed chunks.
@@ -33,3 +34,4 @@ NodeRuntime.runMain(
     ),
   ),
 );
+// oxlint-enable effecttsgo/missing-effect-context

@@ -577,6 +577,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       // `provideContext` removes `ReqServices`, and when no `requestContext` is
       // configured `ReqServices` is `never` (nothing removed).
       const store = readRequestStore(context);
+      // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- the cast is sound, as the comment above explains
       const provided = (
         store === undefined ? program : Effect.provideContext(program, store)
       ) as Effect.Effect<unknown, FailureResponse, RServices>;
@@ -587,7 +588,8 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       // signal and discards its result, so the interrupt rejection is never rendered.
       return runtime
         ? runtime.runPromise(provided, { signal })
-        : Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>, { signal });
+        : // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- with no runtime `RServices` is `never`
+          Effect.runPromise(provided as Effect.Effect<unknown, FailureResponse>, { signal });
     }
 
     function makeLoaderOrAction<Args extends LoaderFunctionArgs | ActionFunctionArgs, A, E, R>(
@@ -712,6 +714,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
     function runResult(result: unknown, args: RouteArgs): unknown {
       return Effect.isEffect(result)
         ? runProgram(
+            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context, effecttsgo/unsafe-effect-type-assertion -- a route function's Effect is only known to be an Effect here; `runProgram` dispatches its whole error channel
             result as Effect.Effect<unknown, unknown, RServices | ReqServices>,
             args.context,
             args.request.signal,

@@ -9,6 +9,11 @@ import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. That code gives the route its success type, which the tests depend on, so
+// `missingReturnYieldStar` is turned off on those lines instead of `return yield*`.
+
 // ---------------------------------------------------------------------------
 // `makeMiddleware` pinned to a route's generated `Route.MiddlewareFunction`.
 //
@@ -34,12 +39,12 @@ class FooServiceError extends Data.TaggedError("FooServiceError")<{ readonly rea
 type DomainErrors = MyDomainError | DbError | NotAuthorizedError;
 
 class InRuntime extends Context.Service<InRuntime>()("test/InRuntime", {
-  make: Effect.succeed({ ping: (): Effect.Effect<string> => Effect.succeed("pong") }),
+  make: Effect.succeed({ ping: Effect.succeed("pong") }),
 }) {
   static readonly layer = Layer.effect(this, this.make);
 }
 class NotInRuntime extends Context.Service<NotInRuntime>()("test/NotInRuntime", {
-  make: Effect.succeed({ pong: (): Effect.Effect<number> => Effect.succeed(1) }),
+  make: Effect.succeed({ pong: Effect.succeed(1) }),
 }) {
   static readonly layer = Layer.effect(this, this.make);
 }
@@ -100,6 +105,7 @@ describe("a pinned middleware propagates the errors the library handles", () => 
   it("a registered domain error type-checks", () => {
     const middleware = makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new MyDomainError({ message: "boom" });
         return yield* next();
       }),
@@ -110,6 +116,7 @@ describe("a pinned middleware propagates the errors the library handles", () => 
   it("a declared domain error with no handler type-checks (it flows to the 500)", () => {
     const middleware = makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new DbError({ query: "select 1" });
         return yield* next();
       }),
@@ -120,6 +127,7 @@ describe("a pinned middleware propagates the errors the library handles", () => 
   it("a respondable domain error with no handler type-checks", () => {
     const middleware = makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new NotAuthorizedError();
         return yield* next();
       }),
@@ -130,7 +138,9 @@ describe("a pinned middleware propagates the errors the library handles", () => 
   it("library route errors raised directly need no handling", () => {
     const middleware = makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login");
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.early({ restricted: true });
         return yield* next();
       }),
@@ -151,7 +161,10 @@ describe("a pinned middleware still enforces handling of everything else", () =>
     makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       // @ts-expect-error - FooServiceError isn't a declared domain error, a library
       // route error, or respondable, so it must be handled in the effect first.
+      // The test asserts this type error, so the Effect diagnostic for it is expected.
+      // @effect-diagnostics-next-line missingEffectError:off
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return yield* next();
       }),
@@ -161,8 +174,12 @@ describe("a pinned middleware still enforces handling of everything else", () =>
   it("a service error mixed in with domain errors still forces handling", () => {
     makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       // @ts-expect-error - DbError is fine, but FooServiceError still must be handled.
+      // The test asserts this type error, so the Effect diagnostic for it is expected.
+      // @effect-diagnostics-next-line missingEffectError:off
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new DbError({ query: "select 1" });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return yield* next();
       }),
@@ -172,6 +189,7 @@ describe("a pinned middleware still enforces handling of everything else", () =>
   it("handling the service error makes it type-check", () => {
     const middleware = makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return yield* next();
       }).pipe(
@@ -192,7 +210,7 @@ describe("a pinned middleware enforces the factory's provided services", () => {
     const middleware = factory.makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       Effect.gen(function* () {
         const svc = yield* InRuntime;
-        yield* svc.ping();
+        yield* svc.ping;
         return yield* next();
       }),
     );
@@ -202,9 +220,11 @@ describe("a pinned middleware enforces the factory's provided services", () => {
   it("requiring a service the runtime does NOT provide fails to type-check", () => {
     factory.makeMiddleware<RouteMiddlewareFunction>((_args, next) =>
       // @ts-expect-error - NotInRuntime is not provided by the configured runtime.
+      // The test asserts this type error, so the Effect diagnostic for it is expected.
+      // @effect-diagnostics-next-line missingEffectContext:off
       Effect.gen(function* () {
         const svc = yield* NotInRuntime;
-        yield* svc.pong();
+        yield* svc.pong;
         return yield* next();
       }),
     );
@@ -220,7 +240,9 @@ describe("an unpinned middleware infers from the effect", () => {
   it("domain errors and library route errors type-check", () => {
     const middleware = makeMiddleware((_args, next) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new DbError({ query: "select 1" });
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.redirect("/login");
         return yield* next();
       }),
@@ -232,6 +254,7 @@ describe("an unpinned middleware infers from the effect", () => {
     makeMiddleware((_args, next) =>
       // @ts-expect-error - FooServiceError must be handled before makeMiddleware accepts it.
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* new FooServiceError({ reason: 1 });
         return yield* next();
       }),

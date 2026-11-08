@@ -73,7 +73,7 @@ jobs:
         run: vp exec wrangler types && vp exec react-router typegen
 
       - name: Format, lint & type check
-        run: vp check
+        run: vp run check
 
       - name: Test
         run: vp test run

@@ -3,6 +3,11 @@ import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import { makeEffectRouteFactory } from "../src/index.ts";
 
+// Effect diagnostics: the route Effects in this file yield an Effect that never
+// succeeds and then return a value or call `next()`, as route code that can fail
+// does. That code gives the route its success type, which the tests depend on, so
+// `missingReturnYieldStar` is turned off on those lines instead of `return yield*`.
+
 // ---------------------------------------------------------------------------
 // The inner config is a *builder* that receives the base `Respond` (so handlers
 // can recover/throw), and the factory returns a single `Respond` - the base
@@ -45,6 +50,7 @@ describe("the factory's returned Respond", () => {
     }));
     const loader = makeLoader(() =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line missingReturnYieldStar:off
         yield* Respond.formError("invalid");
         return true;
       }),

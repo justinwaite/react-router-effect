@@ -65,24 +65,25 @@ const hashedDirectory = (build: ServerBuild, path: Path.Path): Option.Option<str
  * such as a file that the server cannot read, goes to the app's loggers
  * before the 500.
  */
-const makeHandler = Effect.fnUntraced(function* (options: {
+const makeHandler = (options: {
   readonly root: string;
   readonly index: string | undefined;
   readonly cacheControl: string;
-}) {
-  const files = yield* HttpStaticServer.make(options).pipe(
+}) =>
+  HttpStaticServer.make(options).pipe(
     // Making a static server only resolves its root.
     Effect.orDie,
-  );
-  return files.pipe(
-    Effect.catchReason("HttpServerError", "RouteNotFound", HttpServerRespondable.toResponse),
-    Effect.catch((error) =>
-      Effect.logError("Cannot serve a client file", error).pipe(
-        Effect.andThen(HttpServerRespondable.toResponse(error)),
+    Effect.map((files) =>
+      files.pipe(
+        Effect.catchReason("HttpServerError", "RouteNotFound", HttpServerRespondable.toResponse),
+        Effect.catch((error) =>
+          Effect.logError("Cannot serve a client file", error).pipe(
+            Effect.andThen(HttpServerRespondable.toResponse(error)),
+          ),
+        ),
       ),
     ),
   );
-});
 
 /**
  * Registers the routes of the client build on the app's router, for GET and

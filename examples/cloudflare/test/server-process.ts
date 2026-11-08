@@ -99,9 +99,9 @@ export const startServer = async (
 
 /** What the Worker's isolate saw, from `/stats`. */
 const Stats = Schema.Struct({
-  opened: Schema.Number,
-  closed: Schema.Number,
-  background: Schema.Number,
+  opened: Schema.Finite,
+  closed: Schema.Finite,
+  background: Schema.Finite,
 });
 
 export type Stats = typeof Stats.Type;

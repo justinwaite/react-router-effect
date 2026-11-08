@@ -17,7 +17,7 @@ export const loader = Effect.fn("loader.home")(function* () {
   const env = yield* WorkerEnv;
   const format = yield* Format;
   const connection = yield* Connection;
-  const later = Effect.runPromise(
+  const later = Effect.runPromiseWith(yield* Effect.context())(
     Effect.sleep("100 millis").pipe(Effect.andThen(connection.query("select 1"))),
   );
   return { greeting: format.title(env.GREETING), connection: connection.id, later };
