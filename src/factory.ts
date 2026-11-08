@@ -5,6 +5,7 @@ import {
   data,
   redirect,
   type ActionFunctionArgs,
+  type ErrorResponse,
   type UNSAFE_DataWithResponseInit as DataWithResponseInit,
   type LoaderFunctionArgs,
   type MiddlewareFunction,
@@ -13,6 +14,14 @@ import {
 } from "react-router";
 
 import { attachActionMeta, type WithActionMeta } from "./action-meta.ts";
+import {
+  deferFailureResponse,
+  deferRouteError,
+  forkDeferred,
+  withDeferScope,
+  type DeferDiagnose,
+  type DeferredPromise,
+} from "./defer.ts";
 import {
   isRouteError,
   Respond as baseRespond,
@@ -123,6 +132,40 @@ export type RecoverOf<DomainError extends Tagged, Returns, E> = {
         | (Returns[Tag] extends ReturnableDataError<infer B> ? DataWithResponseInit<B> : never)
         | (Returns[Tag] extends Effect.Effect<infer SuccessValue, any, any> ? SuccessValue : never);
 }[keyof Returns];
+
+/**
+ * The errors the factory's `defer` handles in deferred work: the declared
+ * domain errors, and `Respond.early` / `Respond.throw`. A redirect is not one
+ * of them: it cannot happen after the response started.
+ *
+ * @stability unstable
+ */
+export type DeferHandled<DomainError> =
+  | DomainError
+  | ReturnableDataError<unknown>
+  | ThrowableDataError<unknown>;
+
+/**
+ * What a deferred promise resolves with when the work fails with `E`: the
+ * value of a `Respond.early` raised directly, and what the registered
+ * handlers recover. Unlike loader data, a recovered `Respond.early` gives its
+ * value without the `data(...)` wrapper: a promise has no response to set.
+ *
+ * @stability unstable
+ */
+export type DeferRecoverOf<DomainError extends Tagged, Returns, E> =
+  | ReturnableBodyOf<E>
+  | {
+      [Tag in keyof Returns]: [Extract<E, Extract<DomainError, { readonly _tag: Tag }>>] extends [
+        never,
+      ]
+        ? never
+        :
+            | (Returns[Tag] extends ReturnableDataError<infer B> ? B : never)
+            | (Returns[Tag] extends Effect.Effect<infer SuccessValue, any, any>
+                ? SuccessValue
+                : never);
+    }[keyof Returns];
 
 /**
  * Errors the library deals with on the handler's behalf - so the loader/action/
@@ -537,7 +580,10 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       // The internal channel is deliberately loose (`unknown` success); the caller
       // restores the precise resolved type (computed from `E` and the handler map).
       // Sound at runtime - the values produced are exactly those types.
-      const program = effect.pipe(
+      // Deferred work forks into a scope of this run, closed when the request
+      // aborts or the effect fails. It is inside the dispatch, so a failure that
+      // a handler recovers also interrupts the work: its promises are not sent.
+      const program = withDeferScope(effect, signal).pipe(
         // Catch the full error channel and dispatch. The refinement is `e is E`
         // (provably ⊆ E, and a *refinement* not a bare predicate - the predicate
         // overload crashes tsc over a generic `E`). A declared domain error with no
@@ -722,6 +768,73 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
         : result;
     }
 
+    /**
+     * A failure of deferred work, through the error handlers: a recovered
+     * value resolves the promise, a thrown response rejects it with an
+     * `ErrorResponse`. Anything else, such as a domain error with no handler,
+     * is a defect: the promise rejects with no server details.
+     */
+    function dispatchDeferred(e: unknown): Effect.Effect<unknown, ErrorResponse> {
+      for (const tag of userTags) {
+        if (Predicate.isTagged(e, tag)) {
+          const out = userHandlers[tag](e);
+          return isRouteError(out)
+            ? deferRouteError(out)
+            : out.pipe(Effect.catch(deferFailureResponse));
+        }
+      }
+      return isRouteError(e) ? deferRouteError(e) : Effect.die(e);
+    }
+
+    /**
+     * Starts an Effect without waiting for it, and gives a promise of its
+     * result for loader data. React Router streams the promise to `<Await>`.
+     *
+     * The work gets the services and the span of the Effect that defers it.
+     * It keeps running after the loader returns, and is interrupted when the
+     * request aborts or the loader fails. A client-side navigation away does
+     * not abort the request, so the work then runs until it ends or the stream
+     * times out.
+     *
+     * The work may fail only with the factory's domain errors,
+     * `Respond.early` and `Respond.throw`. The error handlers turn them into
+     * the promise's value, or an `ErrorResponse` for `useAsyncError`, as they
+     * do for a loader. A handler that redirects, a domain error with no
+     * handler, a defect or an interrupt rejects the promise with an error that
+     * holds no server details, and the server logs the full cause.
+     *
+     * ```ts
+     * export const { Respond, defer } = routeFactory;
+     *
+     * export const loader = Effect.fn("loader")(function* () {
+     *   const user = yield* Users.current;
+     *   return {
+     *     user,
+     *     reviews: yield* defer(Reviews.list(user.id)),
+     *     stats: yield* Stats.load.pipe(
+     *       Effect.catchTag("StatsUnavailable", () => Effect.succeed(null)),
+     *       defer,
+     *     ),
+     *   };
+     * });
+     * ```
+     *
+     * @stability unstable
+     */
+    function defer<A, E, R>(
+      self: Effect.Effect<A, E, R> & DeferDiagnose<E, DeferHandled<DomainError>>,
+    ): Effect.Effect<DeferredPromise<A | DeferRecoverOf<DomainError, Returns, E>>, never, R> {
+      const work: Effect.Effect<unknown, ErrorResponse, R> = self.pipe(
+        Effect.catch(dispatchDeferred),
+      );
+      // The dispatch resolves with what `DeferRecoverOf` computes from the handlers.
+      return forkDeferred(work) as Effect.Effect<
+        DeferredPromise<A | DeferRecoverOf<DomainError, Returns, E>>,
+        never,
+        R
+      >;
+    }
+
     const actionMeta = config.actionMeta;
 
     // React Router calls every route function with args that include at least
@@ -766,6 +879,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
       ) => Promise<WithActionMeta<A | DirectRecover<E> | RecoverOf<DomainError, Returns, E>, Meta>>,
       makeMiddleware,
       Respond,
+      defer,
       /** The route runner the server adapter applies to every route module. */
       handlers,
       /** Type-only: what the adapter's route check and `Register` read. */
