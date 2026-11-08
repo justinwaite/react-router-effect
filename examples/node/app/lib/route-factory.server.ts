@@ -26,8 +26,8 @@ export const routeFactory = makeEffectRouteFactory<InvalidTodo>()((Respond) => (
     // A form error goes back to the form as data, with a 422.
     InvalidTodo: (error) => Respond.early({ error: error.message }, 422),
   },
-  // Every action's data includes the request id under `__meta`.
-  actionMeta: ({ context }) => ({
+  // Every loader's and action's data includes the request id under `__meta`.
+  routeMeta: ({ context }) => ({
     requestId: Context.get(context.get(requestContext), RequestInfo).id,
   }),
 }));
@@ -40,6 +40,6 @@ export const { Respond } = routeFactory;
 declare module "react-router-effect" {
   interface Register {
     recover: { InvalidTodo: { error: string } };
-    actionMeta: { requestId: string };
+    routeMeta: { requestId: string };
   }
 }

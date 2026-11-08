@@ -1,7 +1,7 @@
 import type { Effect } from "effect";
 import type { UNSAFE_DataWithResponseInit, useLoaderData } from "react-router";
 
-import type { WithActionMeta } from "./action-meta.ts";
+import type { WithRouteMeta } from "./route-meta.ts";
 import type { ReturnableDataError } from "./errors.ts";
 
 // ---------------------------------------------------------------------------
@@ -28,8 +28,8 @@ import type { ReturnableDataError } from "./errors.ts";
  *   interface Register {
  *     // Each error tag a handler recovers, and the data it recovers into.
  *     recover: { FormValidationError: { reply: SubmissionResponse } };
- *     // What `actionMeta` returns.
- *     actionMeta: { realtimeEventIds: ReadonlyArray<string> };
+ *     // What `routeMeta` returns.
+ *     routeMeta: { realtimeEventIds: ReadonlyArray<string> };
  *   }
  * }
  * ```
@@ -39,8 +39,8 @@ export interface Register {}
 /** The registered recover map: error tag to recovered data. */
 export type RegisteredRecover = Register extends { readonly recover: infer Recover } ? Recover : {};
 
-/** The registered action metadata, or `never` when there is none. */
-export type RegisteredMeta = Register extends { readonly actionMeta: infer Meta } ? Meta : never;
+/** The registered route metadata, or `never` when there is none. */
+export type RegisteredMeta = Register extends { readonly routeMeta: infer Meta } ? Meta : never;
 
 /** What a failure of type `E` recovers into: `Respond.early` bodies and registered handlers. */
 type Recovered<E> =
@@ -59,9 +59,9 @@ export type Serialize<T> = ReturnType<typeof useLoaderData<() => Promise<T>>>;
 /**
  * The data an Effect that succeeds with `A` and fails with `E` gives the
  * component: its success and what its failures recover into, serialized as
- * React Router serializes them, with the registered action metadata.
+ * React Router serializes them, with the registered route metadata.
  */
-export type EffectData<A, E> = WithActionMeta<Serialize<A | Recovered<E>>, RegisteredMeta>;
+export type EffectData<A, E> = WithRouteMeta<Serialize<A | Recovered<E>>, RegisteredMeta>;
 
 /**
  * The route data of a loader or action, for React Router's hooks:
@@ -108,10 +108,10 @@ type Unwrapped<A> = A extends Response
  * declarations. `test/consumer` checks the built package for that.
  */
 export type BrandData<A, E> = [A] extends [never]
-  ? WithActionMeta<Recovered<E>, RegisteredMeta>
+  ? WithRouteMeta<Recovered<E>, RegisteredMeta>
   : [A] extends [void]
     ? unknown
-    : WithActionMeta<Unwrapped<A> | Recovered<E>, RegisteredMeta>;
+    : WithRouteMeta<Unwrapped<A> | Recovered<E>, RegisteredMeta>;
 
 declare module "effect/Effect" {
   // React Router reads loader and action data through this brand, so an

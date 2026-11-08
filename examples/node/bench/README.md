@@ -2,7 +2,7 @@
 
 The benchmarks measure the adapter against React Router's own servers, with the same build and the
 same route code. The baselines run route Effects through the same route factory, which provides the
-request's services, maps errors and attaches the action metadata. The setup is one Node 24 process
+request's services, maps errors and attaches the route metadata. The setup is one Node 24 process
 with 50 connections. Each number is the median of 3 rounds:
 
 | Case                    | `@react-router/node` | Express template | react-router-effect | vs Express |

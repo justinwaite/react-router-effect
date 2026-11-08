@@ -6,7 +6,7 @@
  * - The baselines: React Router's own request handler, without Effect's HTTP
  *   server. Their route functions run through the same route factory, which
  *   runs the Effects with the runtime and the request's services, maps their
- *   errors, and attaches the action metadata, as an app without the adapter
+ *   errors, and attaches the route metadata, as an app without the adapter
  *   does with `makeLoader` wrappers. Both sides run the same route code, and
  *   the difference is the server and the adapter.
  */

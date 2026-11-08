@@ -24,7 +24,7 @@ export const loader = Effect.fn("loader.todos")(function* ({
  * 409. Clearing the list redirects through `Respond.redirect`.
  *
  * `EffectRouteArgs` keeps `useFetcher<typeof action>()` typed: the fetcher's
- * data includes what the factory recovers and the action metadata.
+ * data includes what the factory recovers and the route metadata.
  */
 export const action = Effect.fn("action.todos")(function* ({
   request,

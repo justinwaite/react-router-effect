@@ -5,7 +5,7 @@ import {
 } from "react-router";
 import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 
-import { attachActionMeta, type WithActionMeta } from "../src/action-meta.ts";
+import { attachRouteMeta, type WithRouteMeta } from "../src/route-meta.ts";
 
 /** A non-record object whose prototype must survive action completion. */
 class Receipt {
@@ -23,7 +23,7 @@ const meta: Meta = { realtimeEventIds: ["attempt-one", "attempt-two"] };
 it("copies ordinary business fields and replaces only the reserved metadata field", () => {
   const nested = { untouched: true };
   const body = { approvedIds: ["record-one"], nested, __meta: "reserved" };
-  const result = attachActionMeta(body, meta);
+  const result = attachRouteMeta(body, meta);
 
   expect(result).toEqual({ approvedIds: ["record-one"], nested, __meta: meta });
   expect(result).not.toBe(body);
@@ -34,15 +34,15 @@ it("copies ordinary business fields and replaces only the reserved metadata fiel
 it("supports records with a null prototype and empty records", () => {
   const body = { approved: true };
   Object.setPrototypeOf(body, null);
-  expect(attachActionMeta(body, meta)).toEqual({ approved: true, __meta: meta });
-  expect(attachActionMeta({}, meta)).toEqual({ __meta: meta });
+  expect(attachRouteMeta(body, meta)).toEqual({ approved: true, __meta: meta });
+  expect(attachRouteMeta({}, meta)).toEqual({ __meta: meta });
 });
 
 it.each([undefined, 201, { status: 202, statusText: "Queued" }])(
   "preserves the response init of a data wrapper: %j",
   (init) => {
     const wrapped = data({ approved: true }, init);
-    const result = attachActionMeta(wrapped, meta);
+    const result = attachRouteMeta(wrapped, meta);
     expect(result.data).toEqual({ approved: true, __meta: meta });
     expect(result.init).toBe(wrapped.init);
     expect(wrapped.data).toEqual({ approved: true });
@@ -73,7 +73,7 @@ const excluded = [
 
 describe.each(excluded)("$name", ({ value }) => {
   it("passes through the original value", () => {
-    expect(attachActionMeta(value, meta)).toBe(value);
+    expect(attachRouteMeta(value, meta)).toBe(value);
   });
 
   it("passes through the original data wrapper and its init", () => {
@@ -82,14 +82,14 @@ describe.each(excluded)("$name", ({ value }) => {
       statusText: "Unchanged",
       headers: { "Set-Cookie": "untouched=yes" },
     });
-    expect(attachActionMeta(wrapper, meta)).toBe(wrapper);
+    expect(attachRouteMeta(wrapper, meta)).toBe(wrapper);
   });
 });
 
 it("does not consume raw Response bodies, directly or inside data", async () => {
   const response = Response.json({ untouched: true });
-  attachActionMeta(response, meta);
-  attachActionMeta(data(response), meta);
+  attachRouteMeta(response, meta);
+  attachRouteMeta(data(response), meta);
   expect(response.bodyUsed).toBe(false);
   expect(await response.text()).toBe('{"untouched":true}');
 });
@@ -101,16 +101,16 @@ it("does not mistake a business record with data and init fields for a data wrap
     init: null,
     approvedIds: ["record-one"],
   };
-  expect(attachActionMeta(body, meta)).toEqual({ ...body, __meta: meta });
+  expect(attachRouteMeta(body, meta)).toEqual({ ...body, __meta: meta });
 });
 
 it("types metadata as optional on records and data bodies only", () => {
   type Body = { kind: "approved"; ids: string[] } | { kind: "rejected"; reply: string };
-  type Result = WithActionMeta<Body, Meta>;
+  type Result = WithRouteMeta<Body, Meta>;
   expectTypeOf<Extract<Result, { kind: "approved" }>["ids"]>().toEqualTypeOf<string[]>();
   expectTypeOf<Extract<Result, { kind: "rejected" }>["reply"]>().toEqualTypeOf<string>();
   expectTypeOf<Result["__meta"]>().toEqualTypeOf<Meta | undefined>();
-  expectTypeOf<WithActionMeta<DataWithResponseInit<Body>, Meta>["data"]>().toEqualTypeOf<Result>();
+  expectTypeOf<WithRouteMeta<DataWithResponseInit<Body>, Meta>["data"]>().toEqualTypeOf<Result>();
 
   type Excluded =
     | null
@@ -131,12 +131,12 @@ it("types metadata as optional on records and data bodies only", () => {
     | Uint8Array
     | RegExp
     | (() => string);
-  expectTypeOf<WithActionMeta<Excluded, Meta>>().toEqualTypeOf<Excluded>();
-  expectTypeOf<WithActionMeta<DataWithResponseInit<Excluded>, Meta>>().toEqualTypeOf<
+  expectTypeOf<WithRouteMeta<Excluded, Meta>>().toEqualTypeOf<Excluded>();
+  expectTypeOf<WithRouteMeta<DataWithResponseInit<Excluded>, Meta>>().toEqualTypeOf<
     DataWithResponseInit<Excluded>
   >();
 });
 
 it("leaves data unchanged when no metadata is configured", () => {
-  expectTypeOf<WithActionMeta<{ a: 1 }, never>>().toEqualTypeOf<{ a: 1 }>();
+  expectTypeOf<WithRouteMeta<{ a: 1 }, never>>().toEqualTypeOf<{ a: 1 }>();
 });

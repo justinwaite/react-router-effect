@@ -378,7 +378,9 @@ routes.
 
 The adapter's API is unstable, and a minor version can change it. Every export of
 `react-router-effect/server` and `react-router-effect/vite` has the JSDoc tag `@stability unstable`.
-The route factory and the other exports of `react-router-effect` are stable.
+The route factory and the other exports of `react-router-effect` are stable, except the route
+metadata. The `routeMeta` configuration, the `Register` key `routeMeta`, `RouteMetaArgs`,
+`WithRouteMeta` and `routeMetaKey` are unstable, and a minor version can change them.
 
 React Router keeps doing what it does for any other server adapter: documents, `.data` requests,
 streamed promises, resource routes, the lazy route manifest and middleware. Before React Router
@@ -641,8 +643,8 @@ export const middleware = [
   and the span that it provides around `next()` reach every route Effect downstream. `context.set`
   keeps working. You cannot annotate a route array with an effect middleware as
   `Route.MiddlewareFunction[]`.
-- Action metadata: `actionMeta` in the factory config is read after every action resolves. The
-  adapter attaches it to the action's data under `__meta`.
+- Route metadata: `routeMeta` in the factory configuration is read after every loader and action
+  resolves. The adapter attaches it to their data under `__meta`.
 - Tests: `routeFactory.handlers.loader(loader)(args)` runs a route function as the server does.
 
 ### Register what the factory recovers
@@ -653,7 +655,7 @@ A plain Effect loader cannot see the factory's handlers. Declare what they recov
 declare module "react-router-effect" {
   interface Register {
     recover: { FormValidationError: { reply: SubmissionResponse } };
-    actionMeta: { realtimeEventIds: ReadonlyArray<string> };
+    routeMeta: { realtimeEventIds: ReadonlyArray<string> };
   }
 }
 ```
@@ -811,7 +813,7 @@ export const loader = makeLoader(() =>
 
 ## API
 
-- `makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond?, actionMeta? }))`
+- `makeEffectRouteFactory<DomainErrors>()((Respond) => ({ errorHandlers?, runtime?, requestContext?, respond?, routeMeta? }))`
   returns `{ makeLoader, makeAction, makeMiddleware, Respond, handlers }`. The config is a builder
   that receives the base `Respond`. All its fields are optional. The returned `Respond` is the base
   helpers merged with your `respond` extensions, and the base helpers win. `makeLoader` and

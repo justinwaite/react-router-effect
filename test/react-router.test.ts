@@ -65,7 +65,7 @@ const routeFactory = makeEffectRouteFactory<FormError | UnhandledError>()((Respo
   errorHandlers: {
     FormError: (error) => Respond.early({ reply: error.reply }, 422),
   },
-  actionMeta: () => ({ requestId: "request-1" }),
+  routeMeta: () => ({ requestId: "request-1" }),
 }));
 const store = routeFactory.handlers.requestContext;
 
@@ -248,7 +248,7 @@ describe("ReactRouter.routes", () => {
     });
   });
 
-  it("attaches the factory's action metadata to a bare Effect.fn action", async () => {
+  it("attaches the factory's route metadata to a bare Effect.fn action", async () => {
     const response = await fetch(`${origin}/page.data`, { method: "POST", headers: { origin } });
     expect(await response.text()).toContain("request-1");
   });
@@ -261,10 +261,10 @@ describe("ReactRouter.routes", () => {
   it("recovers a domain error of a bare Effect.fn loader and of a makeLoader wrapper", async () => {
     const bare = await fetch(`${origin}/recovered`);
     expect(bare.status).toBe(422);
-    expect(await bare.json()).toEqual({ reply: "bare" });
+    expect(await bare.json()).toEqual({ reply: "bare", __meta: { requestId: "request-1" } });
     const wrapped = await fetch(`${origin}/wrapped`);
     expect(wrapped.status).toBe(422);
-    expect(await wrapped.json()).toEqual({ reply: "wrapped" });
+    expect(await wrapped.json()).toEqual({ reply: "wrapped", __meta: { requestId: "request-1" } });
   });
 
   it("answers 500 for an unhandled domain error", async () => {
