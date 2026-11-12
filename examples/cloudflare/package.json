@@ -20,7 +20,7 @@
     "react-router-effect": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.67.0",
+    "@cloudflare/vite-plugin": "1.68.0",
     "@react-router/dev": "8.5.1",
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.17",
@@ -29,6 +29,6 @@
     "vite": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:",
-    "wrangler": "4.158.0"
+    "wrangler": "4.159.0"
   }
 }
