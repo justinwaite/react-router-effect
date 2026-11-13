@@ -1,8 +1,9 @@
-import { Data, Effect } from "effect";
+import { Cause, Data, Effect, Exit } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/http";
-import type { LoaderFunctionArgs, MiddlewareFunction } from "react-router";
+import { data, type LoaderFunctionArgs, type MiddlewareFunction } from "react-router";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { FailureResponse } from "../src/factory.ts";
 import { makeEffectRouteFactory } from "../src/index.ts";
 
 // Effect diagnostics: the route Effects in this file yield an Effect that never
@@ -402,5 +403,39 @@ describe("makeMiddleware", () => {
     const result = await settle(middleware(args, next));
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error).toBe(downstreamRedirect);
+  });
+
+  it("surfaces a downstream data(...) rejection as a typed FailureResponse", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
+    const middleware = factory.makeMiddleware((_args, next) => next());
+    const downstreamData = data({ message: "gone" }, { status: 410 });
+    const next = async () => {
+      throw downstreamData;
+    };
+    const result = await settle(middleware(args, next));
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error).toBe(downstreamData);
+  });
+
+  it("dies with a downstream crash, and rejects with the original error", async () => {
+    const factory = makeEffectRouteFactory<DomainErrors>()(() => ({}));
+    const exits: Array<Exit.Exit<unknown, FailureResponse>> = [];
+    const middleware = factory.makeMiddleware((_args, next) =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(next());
+        exits.push(exit);
+        return yield* exit;
+      }),
+    );
+    const crash = new Error("downstream crashed");
+    const next = async () => {
+      throw crash;
+    };
+    const result = await settle(middleware(args, next));
+    expect(result.ok ? undefined : result.error).toBe(crash);
+    // The crash is a defect, not a response in the typed error channel.
+    const [exit] = exits;
+    expect(exit !== undefined && Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(exit !== undefined && Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(false);
   });
 });
