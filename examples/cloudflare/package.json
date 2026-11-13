@@ -22,7 +22,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.67.0",
     "@react-router/dev": "8.5.1",
-    "@types/node": "^25.6.2",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "typescript": "^7.0.2",
