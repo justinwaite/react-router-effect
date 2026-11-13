@@ -841,6 +841,8 @@ The effect gets `next` as `() => Effect.Effect<Result, FailureResponse>`. It is 
 `next: () => Promise<Result>`, wrapped. Call it with `yield*` to run the downstream loaders and
 middleware. A downstream throw, such as a nested loader's redirect, becomes a typed failure instead
 of a rejected promise. It flows through the same recover and throw handling as a loader or action.
+A downstream crash, such as an `Error` from a later middleware, is a defect, not a typed failure.
+The middleware rejects with the original error, so React Router passes it to `handleError`.
 
 ### Per-request services
 

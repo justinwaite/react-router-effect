@@ -1,4 +1,4 @@
-import { Context, Effect, type ManagedRuntime, Predicate } from "effect";
+import { Context, Effect, Exit, type ManagedRuntime, Predicate } from "effect";
 import { HttpServerRespondable, HttpServerResponse } from "effect/http";
 import {
   createContext,
@@ -268,6 +268,24 @@ const isFailureResponse = (e: unknown): e is FailureResponse =>
     e !== null &&
     "type" in e &&
     (e as { type?: unknown }).type === "DataWithResponseInit");
+
+/**
+ * Runs React Router's `next` as an effect. A thrown `Response` or `data(...)`
+ * is a finished response, so the effect fails with it. Any other rejection,
+ * such as an `Error` from a later middleware, is a crash, so the effect dies
+ * with it. The run then rejects with the original value: React Router passes it
+ * to `handleError`, and the spans end with it.
+ */
+const runNext = (next: () => Promise<unknown>): Effect.Effect<unknown, FailureResponse> =>
+  Effect.flatten(
+    Effect.promise(async (): Promise<Exit.Exit<unknown, FailureResponse>> => {
+      try {
+        return Exit.succeed(await next());
+      } catch (error) {
+        return isFailureResponse(error) ? Exit.fail(error) : Exit.die(error);
+      }
+    }),
+  );
 
 /** The internal dispatch for a library route error: recover, throw, or redirect. */
 const processRouteError = (
@@ -740,8 +758,9 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
      * chain, it adds to the request's effect context what the calling fiber
      * provides beyond the context the middleware started with: services it
      * provides around `next()`, log annotations, and its current span. Updates
-     * the middleware made with `context.set` stay. A downstream rejection is
-     * already a finished response, so it fails with that response as-is.
+     * the middleware made with `context.set` stay. A downstream `Response` or
+     * `data(...)` rejection fails with that response as-is. Any other rejection
+     * is a defect, as `runNext` explains.
      */
     function makeEffectNext(
       context: Readonly<RouterContextProvider>,
@@ -756,7 +775,7 @@ export function makeEffectRouteFactory<DomainError extends Tagged = never>() {
               Context.merge(context.get(storeKey), providedSince(started, fiber.context)),
             );
           }
-          return Effect.tryPromise({ try: next, catch: (e) => e as FailureResponse });
+          return runNext(next);
         });
     }
 

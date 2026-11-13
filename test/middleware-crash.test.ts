@@ -94,6 +94,9 @@ const build: ServerBuild = {
       },
     },
   },
+  // The build plugin creates this manifest from route module namespaces. React
+  // Router's static route module type admits neither Effect route functions nor
+  // resource modules without a default export, which built apps contain.
   routes: routes as unknown as ServerBuild["routes"],
   assets: {
     entry: { imports: [], module: "/entry.client.js" },
